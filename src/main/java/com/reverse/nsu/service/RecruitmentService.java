@@ -113,6 +113,7 @@ public class RecruitmentService {
                     .title(recruit.getTitle())
                     .applyStartDate(recruit.getApplyStartDate())
                     .applyEndDate(recruit.getApplyEndDate())
+                    .isActive(recruit.getIsActive())
                     .isApplyPeriod(isApplyPeriod)
                     .build();
         }
@@ -168,6 +169,7 @@ public class RecruitmentService {
                 .title(recruit.getTitle())
                 .applyStartDate(recruit.getApplyStartDate())
                 .applyEndDate(recruit.getApplyEndDate())
+                .isActive(recruit.getIsActive())
                 .isApplyPeriod(isApplyPeriod)
                 .page(pageDetails)
                 .build();
@@ -181,6 +183,7 @@ public class RecruitmentService {
                         .title(r.getTitle())
                         .applyStartDate(r.getApplyStartDate())
                         .applyEndDate(r.getApplyEndDate())
+                        .isActive(r.getIsActive())
                         .build())
                 .collect(Collectors.toList());
     }
@@ -189,7 +192,6 @@ public class RecruitmentService {
     public RecruitmentResponseDto save(RecruitmentRequestDto dto, String adminId) {
         Recruitment recruitment = dto.toEntity();
         recruitment.setUpdatedBy(adminId);
-        recruitment.setIsActive(true);
 
         Recruitment savedRecruit = recruitmentRepository.save(recruitment);
 
@@ -203,6 +205,7 @@ public class RecruitmentService {
                 .title(savedRecruit.getTitle())
                 .applyStartDate(savedRecruit.getApplyStartDate())
                 .applyEndDate(savedRecruit.getApplyEndDate())
+                .isActive(savedRecruit.getIsActive())
                 .build();
     }
 
