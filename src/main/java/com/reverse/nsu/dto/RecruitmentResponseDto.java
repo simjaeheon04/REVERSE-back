@@ -1,7 +1,9 @@
 package com.reverse.nsu.dto;
 
 import lombok.*;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 
 @Getter @Setter @Builder
@@ -75,6 +77,8 @@ public class RecruitmentResponseDto {
         private Integer slotId;
         private String date;
         private String time;
+        private LocalTime startTime;
+        private LocalTime endTime;
         private Boolean isAvailable; // 정의서: 면접 기간 외 선택 불가 로직용
     }
 
@@ -96,6 +100,9 @@ public class RecruitmentResponseDto {
         private String portfolioUrl;
         private List<String> categories;
         private Integer interviewSlotId;
+        private LocalDate interviewDate;
+        private LocalTime interviewStartTime;
+        private LocalTime interviewEndTime;
         private Integer termsAgreed;
         private String status;
         private LocalDateTime createdDate;

@@ -4,6 +4,8 @@ import com.reverse.nsu.dto.ApplicationInterviewScheduleRequestDto;
 import com.reverse.nsu.dto.RecruitmentRequestDto;
 import com.reverse.nsu.dto.RecruitmentResponseDto;
 import com.reverse.nsu.entity.*;
+import com.reverse.nsu.exception.InterviewSlotConflictException;
+import com.reverse.nsu.repository.ApplicationInterviewScheduleRepository;
 import com.reverse.nsu.repository.RecruitmentApplicationRepository;
 import com.reverse.nsu.repository.RecruitmentInterviewSlotRepository;
 import com.reverse.nsu.repository.RecruitmentRepository;
@@ -13,14 +15,20 @@ import lombok.RequiredArgsConstructor;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -29,6 +37,7 @@ public class RecruitmentAdminService {
 
     private final RecruitmentRepository recruitmentRepository;
     private final RecruitmentApplicationRepository applicationRepository;
+    private final ApplicationInterviewScheduleRepository interviewScheduleRepository;
     private final RecruitmentInterviewSlotRepository interviewSlotRepository;
     private final EntityManager entityManager;
 
@@ -148,29 +157,168 @@ public class RecruitmentAdminService {
     }
 
     /**
-     * 면접 일정 슬롯 설정 로직 (기존 슬롯 초기화 후 재생성)
+     * 기존 API 호환용 면접 슬롯 설정 로직.
+     * 기존 슬롯을 삭제하지 않고, ID 또는 정확한 날짜/시간 매칭으로만 수정한다.
      */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public void updateInterviewSlots(Integer recruitmentId, RecruitmentRequestDto.InterviewSlotUpdate dto, String adminId) {
-        Recruitment recruitment = recruitmentRepository.findById(recruitmentId)
+        Recruitment recruitment = recruitmentRepository.findByIdForUpdate(recruitmentId)
                 .orElseThrow(() -> new EntityNotFoundException("공고를 찾을 수 없습니다."));
 
-        // 1. 기존 슬롯 삭제
-        interviewSlotRepository.deleteByRecruitment_RecruitmentId(recruitmentId);
-        entityManager.flush();
+        if (dto.getSlots() == null) {
+            throw new IllegalArgumentException("면접 슬롯 목록은 필수입니다.");
+        }
 
-        // 2. 새로운 슬롯 등록
-        if (dto.getSlots() != null) {
-            dto.getSlots().forEach(s -> {
-                RecruitmentInterviewSlot slot = RecruitmentInterviewSlot.builder()
-                        .recruitment(recruitment)
-                        .slotDate(s.getSlotDate())
-                        .capacity(s.getCapacity())
-                        .isActive(true)
-                        .updatedBy(adminId)
-                        .build();
-                interviewSlotRepository.save(slot);
-            });
+        boolean initialRegistration = interviewSlotRepository
+                .findAllByRecruitment_RecruitmentId(recruitmentId).isEmpty();
+        Set<Integer> requestedSlotIds = new HashSet<>();
+        Set<InterviewSlotKey> requestedSlotKeys = new HashSet<>();
+
+        for (RecruitmentRequestDto.SlotDto slotDto : dto.getSlots()) {
+            validateInterviewSlot(slotDto);
+
+            if (slotDto.getSlotId() != null) {
+                if (!requestedSlotIds.add(slotDto.getSlotId())) {
+                    throw new InterviewSlotConflictException("동일한 면접 슬롯 ID가 중복 요청되었습니다.");
+                }
+                RecruitmentInterviewSlot existingSlot = interviewSlotRepository
+                        .findByIdForUpdate(slotDto.getSlotId())
+                        .orElseThrow(() -> new IllegalArgumentException("해당 면접 슬롯을 찾을 수 없습니다."));
+                updateExistingInterviewSlot(recruitmentId, existingSlot, slotDto, adminId);
+                continue;
+            }
+
+            InterviewSlotKey slotKey = InterviewSlotKey.from(slotDto);
+            if (!requestedSlotKeys.add(slotKey)) {
+                throw new InterviewSlotConflictException("동일한 날짜와 시간의 면접 슬롯이 중복 요청되었습니다.");
+            }
+
+            List<RecruitmentInterviewSlot> matchingSlots = interviewSlotRepository
+                    .findMatchingSlotsForUpdate(recruitmentId, slotDto.getSlotDate(),
+                            slotDto.getStartTime(), slotDto.getEndTime());
+            if (matchingSlots.size() > 1) {
+                throw new InterviewSlotConflictException(
+                        "동일한 날짜와 시간의 기존 슬롯이 여러 개 있어 안전하게 수정할 수 없습니다. slotId를 포함해 /slots/v2 API를 사용해주세요.");
+            }
+            if (matchingSlots.size() == 1) {
+                updateExistingInterviewSlot(recruitmentId, matchingSlots.get(0), slotDto, adminId);
+                continue;
+            }
+            if (!initialRegistration) {
+                throw new InterviewSlotConflictException(
+                        "기존 슬롯을 안전하게 식별할 수 없습니다. 날짜나 시간을 변경하려면 slotId를 포함해 /slots/v2 API를 사용해주세요.");
+            }
+
+            interviewSlotRepository.save(createInterviewSlot(recruitment, slotDto, adminId));
+        }
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public void upsertInterviewSlots(
+            Integer recruitmentId, RecruitmentRequestDto.InterviewSlotUpdate dto, String adminId) {
+        Recruitment recruitment = recruitmentRepository.findByIdForUpdate(recruitmentId)
+                .orElseThrow(() -> new EntityNotFoundException("공고를 찾을 수 없습니다."));
+
+        if (dto.getSlots() == null) {
+            throw new IllegalArgumentException("면접 슬롯 목록은 필수입니다.");
+        }
+
+        Set<Integer> requestedSlotIds = new HashSet<>();
+        Set<InterviewSlotKey> requestedSlotKeys = new HashSet<>();
+        for (RecruitmentRequestDto.SlotDto slotDto : dto.getSlots()) {
+            validateInterviewSlot(slotDto);
+
+            if (slotDto.getSlotId() == null) {
+                InterviewSlotKey slotKey = InterviewSlotKey.from(slotDto);
+                if (!requestedSlotKeys.add(slotKey)) {
+                    throw new InterviewSlotConflictException("동일한 날짜와 시간의 면접 슬롯이 중복 요청되었습니다.");
+                }
+
+                List<RecruitmentInterviewSlot> matchingSlots = interviewSlotRepository
+                        .findMatchingSlotsForUpdate(recruitmentId, slotDto.getSlotDate(),
+                                slotDto.getStartTime(), slotDto.getEndTime());
+                if (!matchingSlots.isEmpty()) {
+                    throw new InterviewSlotConflictException(
+                            "동일한 날짜와 시간의 슬롯이 이미 존재합니다. 기존 slotId를 사용해 수정해주세요.");
+                }
+
+                interviewSlotRepository.save(createInterviewSlot(recruitment, slotDto, adminId));
+                continue;
+            }
+
+            if (!requestedSlotIds.add(slotDto.getSlotId())) {
+                throw new IllegalArgumentException("동일한 면접 슬롯 ID가 중복 요청되었습니다.");
+            }
+
+            RecruitmentInterviewSlot existingSlot = interviewSlotRepository.findByIdForUpdate(slotDto.getSlotId())
+                    .orElseThrow(() -> new IllegalArgumentException("해당 면접 슬롯을 찾을 수 없습니다."));
+            updateExistingInterviewSlot(recruitmentId, existingSlot, slotDto, adminId);
+        }
+    }
+
+    private RecruitmentInterviewSlot createInterviewSlot(
+            Recruitment recruitment, RecruitmentRequestDto.SlotDto slotDto, String adminId) {
+        return RecruitmentInterviewSlot.builder()
+                .recruitment(recruitment)
+                .slotDate(slotDto.getSlotDate())
+                .startTime(slotDto.getStartTime())
+                .endTime(slotDto.getEndTime())
+                .capacity(slotDto.getCapacity())
+                .isActive(slotDto.getIsActive() != null ? slotDto.getIsActive() : true)
+                .updatedBy(adminId)
+                .build();
+    }
+
+    private void updateExistingInterviewSlot(
+            Integer recruitmentId,
+            RecruitmentInterviewSlot existingSlot,
+            RecruitmentRequestDto.SlotDto slotDto,
+            String adminId) {
+        if (!Objects.equals(existingSlot.getRecruitment().getRecruitmentId(), recruitmentId)) {
+            throw new IllegalArgumentException("다른 모집공고의 면접 슬롯은 수정할 수 없습니다.");
+        }
+
+        long assignedCount = interviewScheduleRepository
+                .countByInterviewSlot_SlotId(existingSlot.getSlotId());
+        if (slotDto.getCapacity() < assignedCount) {
+            throw new IllegalStateException("현재 배정 인원보다 슬롯 정원을 작게 설정할 수 없습니다.");
+        }
+
+        existingSlot.setSlotDate(slotDto.getSlotDate());
+        existingSlot.setStartTime(slotDto.getStartTime());
+        existingSlot.setEndTime(slotDto.getEndTime());
+        existingSlot.setCapacity(slotDto.getCapacity());
+        if (slotDto.getIsActive() != null) {
+            existingSlot.setIsActive(slotDto.getIsActive());
+        }
+        existingSlot.setUpdatedBy(adminId);
+    }
+
+    private record InterviewSlotKey(LocalDate slotDate, LocalTime startTime, LocalTime endTime) {
+        private static InterviewSlotKey from(RecruitmentRequestDto.SlotDto slotDto) {
+            return new InterviewSlotKey(
+                    slotDto.getSlotDate(), slotDto.getStartTime(), slotDto.getEndTime());
+        }
+    }
+
+    private void validateInterviewSlot(RecruitmentRequestDto.SlotDto slotDto) {
+        if (slotDto == null) {
+            throw new IllegalArgumentException("면접 슬롯 정보는 필수입니다.");
+        }
+        if (slotDto.getSlotDate() == null) {
+            throw new IllegalArgumentException("면접 날짜는 필수입니다.");
+        }
+        if (slotDto.getCapacity() == null || slotDto.getCapacity() <= 0) {
+            throw new IllegalArgumentException("면접 슬롯 정원은 1명 이상이어야 합니다.");
+        }
+
+        boolean hasStartTime = slotDto.getStartTime() != null;
+        boolean hasEndTime = slotDto.getEndTime() != null;
+        if (hasStartTime != hasEndTime) {
+            throw new IllegalArgumentException("면접 시작 시간과 종료 시간은 함께 입력해야 합니다.");
+        }
+        if (hasStartTime && !slotDto.getStartTime().isBefore(slotDto.getEndTime())) {
+            throw new IllegalArgumentException("면접 시작 시간은 종료 시간보다 빨라야 합니다.");
         }
     }
 
@@ -215,15 +363,44 @@ public class RecruitmentAdminService {
     /**
      * 개별 지원자 면접 스케줄 설정
      */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public void setInterviewSchedule(ApplicationInterviewScheduleRequestDto dto) {
         RecruitmentApplication application = applicationRepository.findById(dto.getApplicationId())
                 .orElseThrow(() -> new IllegalArgumentException("해당 지원서를 찾을 수 없습니다."));
 
-        RecruitmentInterviewSlot slot = interviewSlotRepository.findById(dto.getSlotId())
+        RecruitmentInterviewSlot slot = interviewSlotRepository.findByIdForUpdate(dto.getSlotId())
                 .orElseThrow(() -> new IllegalArgumentException("해당 면접 슬롯을 찾을 수 없습니다."));
 
-        application.getApplicationInterviewSchedule().clear();
+        if (!Objects.equals(application.getRecruitment().getRecruitmentId(),
+                slot.getRecruitment().getRecruitmentId())) {
+            throw new IllegalArgumentException("지원서와 면접 슬롯의 모집공고가 일치하지 않습니다.");
+        }
+
+        if (!Boolean.TRUE.equals(slot.getIsActive())) {
+            throw new IllegalStateException("비활성화된 면접 슬롯입니다.");
+        }
+
+        ApplicationInterviewSchedule currentSchedule = application.getApplicationInterviewSchedule().stream()
+                .findFirst()
+                .orElse(null);
+        if (currentSchedule != null
+                && Objects.equals(currentSchedule.getInterviewSlot().getSlotId(), slot.getSlotId())) {
+            return;
+        }
+
+        if (slot.getCapacity() == null || slot.getCapacity() <= 0) {
+            throw new IllegalStateException("면접 슬롯 정원이 올바르지 않습니다.");
+        }
+
+        long assignedCount = interviewScheduleRepository.countByInterviewSlot_SlotId(slot.getSlotId());
+        if (assignedCount >= slot.getCapacity()) {
+            throw new IllegalStateException("면접 슬롯 정원이 마감되었습니다.");
+        }
+
+        if (currentSchedule != null) {
+            currentSchedule.setInterviewSlot(slot);
+            return;
+        }
 
         ApplicationInterviewSchedule schedule = ApplicationInterviewSchedule.builder()
                 .application(application)
@@ -268,6 +445,11 @@ public class RecruitmentAdminService {
     }
 
     private RecruitmentResponseDto.ApplicationDetails convertToApplicationDetails(RecruitmentApplication application) {
+        RecruitmentInterviewSlot assignedSlot = application.getApplicationInterviewSchedule().stream()
+                .findFirst()
+                .map(ApplicationInterviewSchedule::getInterviewSlot)
+                .orElse(null);
+
         return RecruitmentResponseDto.ApplicationDetails.builder()
                 .applicationId(application.getApplicationId())
                 .recruitmentId(application.getRecruitment().getRecruitmentId())
@@ -281,10 +463,10 @@ public class RecruitmentAdminService {
                 .categories(application.getApplyFields().stream()
                         .map(ApplicationApplyField::getApplyField)
                         .toList())
-                .interviewSlotId(application.getApplicationInterviewSchedule().stream()
-                        .findFirst()
-                        .map(schedule -> schedule.getInterviewSlot().getSlotId())
-                        .orElse(null))
+                .interviewSlotId(assignedSlot != null ? assignedSlot.getSlotId() : null)
+                .interviewDate(assignedSlot != null ? assignedSlot.getSlotDate() : null)
+                .interviewStartTime(assignedSlot != null ? assignedSlot.getStartTime() : null)
+                .interviewEndTime(assignedSlot != null ? assignedSlot.getEndTime() : null)
                 .termsAgreed(application.getTermsAgreed())
                 .status(application.getStatus())
                 .createdDate(application.getCreatedAt())

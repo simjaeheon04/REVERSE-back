@@ -1,6 +1,7 @@
 package com.reverse.nsu.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -11,6 +12,7 @@ import java.time.format.DateTimeFormatter;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class EmailService {
 
     private final JavaMailSender mailSender;
@@ -46,8 +48,8 @@ public class EmailService {
                     "변경 일시 : " + timestamp
             );
             mailSender.send(message);
-        } catch (Exception ignored) {
-            // 이메일 발송 실패가 API 응답에 영향을 주지 않도록 처리
+        } catch (Exception e) {
+            log.error("관리자 감사 메일 발송에 실패했습니다. changedBy={}, action={}", changedBy, action, e);
         }
     }
 }

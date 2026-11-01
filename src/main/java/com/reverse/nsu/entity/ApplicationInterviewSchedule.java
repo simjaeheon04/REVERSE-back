@@ -15,7 +15,7 @@ public class ApplicationInterviewSchedule {
     private Integer id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "applicationId", nullable = false)
+    @JoinColumn(name = "applicationId", nullable = false, unique = true)
     private RecruitmentApplication application;
 
     // 필드명을 interviewSlot으로 설정!

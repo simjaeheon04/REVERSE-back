@@ -3,6 +3,7 @@ package com.reverse.nsu.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.LocalDate;
+import java.time.LocalTime;
 
 @Entity
 @Getter @Setter
@@ -23,6 +24,12 @@ public class RecruitmentInterviewSlot extends BaseTimeEntity {
 
     @Column(name = "slotDate", nullable = false) // 스키마: slotDate (Date)
     private LocalDate slotDate;
+
+    @Column(name = "startTime")
+    private LocalTime startTime;
+
+    @Column(name = "endTime")
+    private LocalTime endTime;
 
     @Column(name = "capacity", nullable = false) // 스키마: capacity (Int)
     @Builder.Default
