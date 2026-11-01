@@ -6,6 +6,7 @@ import com.reverse.nsu.entity.ApplicationInterviewSchedule;
 import com.reverse.nsu.entity.Recruitment;
 import com.reverse.nsu.entity.RecruitmentApplication;
 import com.reverse.nsu.entity.RecruitmentInterviewSlot;
+import com.reverse.nsu.exception.InvalidRecruitmentRequestException;
 import com.reverse.nsu.exception.InterviewSlotConflictException;
 import com.reverse.nsu.repository.ApplicationInterviewScheduleRepository;
 import com.reverse.nsu.repository.RecruitmentApplicationRepository;
@@ -76,6 +77,53 @@ class RecruitmentAdminServiceTest {
     }
 
     @Test
+    void createRecruitment_preservesExplicitFalse() {
+        Map<String, Object> request = validRequest();
+        request.put("isActive", false);
+        when(recruitmentRepository.save(any(Recruitment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        Recruitment created = recruitmentAdminService.createRecruitment(request, "admin01");
+
+        assertThat(created.getIsActive()).isFalse();
+    }
+
+    @Test
+    void createRecruitment_preservesExplicitTrue() {
+        Map<String, Object> request = validRequest();
+        request.put("isActive", true);
+        when(recruitmentRepository.save(any(Recruitment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        Recruitment created = recruitmentAdminService.createRecruitment(request, "admin01");
+
+        assertThat(created.getIsActive()).isTrue();
+    }
+
+    @Test
+    void createRecruitment_defaultsMissingIsActiveToTrue() {
+        when(recruitmentRepository.save(any(Recruitment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        Recruitment created = recruitmentAdminService.createRecruitment(validRequest(), "admin01");
+
+        assertThat(created.getIsActive()).isTrue();
+    }
+
+    @Test
+    void createRecruitment_rejectsNullOrNonBooleanIsActive() {
+        for (Object invalidValue : new Object[]{null, "false", 0}) {
+            Map<String, Object> request = validRequest();
+            request.put("isActive", invalidValue);
+
+            assertThatThrownBy(() -> recruitmentAdminService.createRecruitment(request, "admin01"))
+                    .isInstanceOf(InvalidRecruitmentRequestException.class);
+        }
+
+        verify(recruitmentRepository, never()).save(any(Recruitment.class));
+    }
+
+    @Test
     void updateRecruitment_changesDatesOnExistingEntity() {
         Recruitment existingRecruitment = Recruitment.builder()
                 .title("Existing recruitment")
@@ -92,6 +140,58 @@ class RecruitmentAdminServiceTest {
                 .isEqualTo(LocalDateTime.of(2027, 3, 1, 0, 0));
         assertThat(existingRecruitment.getApplyEndDate())
                 .isEqualTo(LocalDateTime.of(2027, 3, 31, 23, 59, 59));
+    }
+
+    @Test
+    void updateRecruitment_changesTrueToFalse() {
+        Recruitment existing = existingRecruitment(true);
+        when(recruitmentRepository.findById(1)).thenReturn(Optional.of(existing));
+        Map<String, Object> request = validRequest();
+        request.put("isActive", false);
+
+        Boolean returnedStatus = recruitmentAdminService.updateRecruitment(1, request, "admin01");
+
+        assertThat(existing.getIsActive()).isFalse();
+        assertThat(returnedStatus).isFalse();
+    }
+
+    @Test
+    void updateRecruitment_changesFalseToTrue() {
+        Recruitment existing = existingRecruitment(false);
+        when(recruitmentRepository.findById(1)).thenReturn(Optional.of(existing));
+        Map<String, Object> request = validRequest();
+        request.put("isActive", true);
+
+        Boolean returnedStatus = recruitmentAdminService.updateRecruitment(1, request, "admin01");
+
+        assertThat(existing.getIsActive()).isTrue();
+        assertThat(returnedStatus).isTrue();
+    }
+
+    @Test
+    void updateRecruitment_keepsExistingStatusWhenFieldIsMissing() {
+        Recruitment existing = existingRecruitment(false);
+        when(recruitmentRepository.findById(1)).thenReturn(Optional.of(existing));
+
+        Boolean returnedStatus = recruitmentAdminService.updateRecruitment(1, validRequest(), "admin01");
+
+        assertThat(existing.getIsActive()).isFalse();
+        assertThat(returnedStatus).isFalse();
+    }
+
+    @Test
+    void updateRecruitment_rejectsNullOrNonBooleanWithoutChangingEntity() {
+        for (Object invalidValue : new Object[]{null, "true", 1}) {
+            Recruitment existing = existingRecruitment(true);
+            when(recruitmentRepository.findById(1)).thenReturn(Optional.of(existing));
+            Map<String, Object> request = validRequest();
+            request.put("isActive", invalidValue);
+
+            assertThatThrownBy(() -> recruitmentAdminService.updateRecruitment(1, request, "admin01"))
+                    .isInstanceOf(InvalidRecruitmentRequestException.class);
+            assertThat(existing.getIsActive()).isTrue();
+            org.mockito.Mockito.reset(recruitmentRepository);
+        }
     }
 
     @Test
@@ -532,6 +632,17 @@ class RecruitmentAdminServiceTest {
         request.put("applyStartDate", "2027-03-01T00:00:00");
         request.put("applyEndDate", "2027-03-31T23:59:59");
         return request;
+    }
+
+    private Recruitment existingRecruitment(boolean isActive) {
+        return Recruitment.builder()
+                .title("Existing recruitment")
+                .description("Existing description")
+                .applyStartDate(LocalDateTime.of(2026, 3, 1, 0, 0))
+                .applyEndDate(LocalDateTime.of(2026, 3, 31, 23, 59, 59))
+                .isActive(isActive)
+                .updatedBy("oldAdmin")
+                .build();
     }
 
     private void stubInterviewAssignment(RecruitmentApplication application, RecruitmentInterviewSlot slot) {

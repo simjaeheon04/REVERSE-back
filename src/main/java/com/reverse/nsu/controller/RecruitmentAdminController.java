@@ -97,7 +97,8 @@ public class RecruitmentAdminController {
                 "status", "success",
                 "message", "공고 및 상세 페이지 등록 완료",
                 "recruitmentId", recruitment.getRecruitmentId(),
-                "pageId", recruitment.getRecruitmentPage().getPageId()
+                "pageId", recruitment.getRecruitmentPage().getPageId(),
+                "isActive", recruitment.getIsActive()
         ));
     }
 
@@ -114,13 +115,14 @@ public class RecruitmentAdminController {
         if (userId == null) return unauthorized();
         if (!roleCheckService.isAdmin(userId)) return forbidden();
 
-        recruitmentAdminService.updateRecruitment(id, body, userId);
+        Boolean isActive = recruitmentAdminService.updateRecruitment(id, body, userId);
         emailService.sendAuditLog(userId, "모집 공고 수정 (ID: " + id + ")");
 
         return ResponseEntity.ok(Map.of(
                 "status", "success",
                 "message", "공고 수정 완료",
-                "recruitmentId", id
+                "recruitmentId", id,
+                "isActive", isActive
         ));
     }
 

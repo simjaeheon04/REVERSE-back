@@ -15,6 +15,7 @@ public class RecruitmentResponseDto {
     // [종호 님 요청 사항] 모집 기간 지정을 위한 날짜 데이터 추가
     private LocalDateTime applyStartDate; // 모집 시작일
     private LocalDateTime applyEndDate;   // 모집 종료일
+    private Boolean isActive;
 
     // 화면정의서: 모집 기간 아닐 때 "지금은 신청 기간이 아닙니다" 문구 처리를 위한 상태값
     private Boolean isApplyPeriod;

@@ -59,12 +59,16 @@ public class Recruitment {
     private List<RecruitmentInterviewSlot> interviewSlots = new ArrayList<>();
 
     // ⭐ [추가] 공고 수정을 위한 비즈니스 메서드
-    public void update(String title, String description, LocalDateTime applyStartDate, LocalDateTime applyEndDate, String updatedBy) {
+    public void update(String title, String description, LocalDateTime applyStartDate,
+                       LocalDateTime applyEndDate, String updatedBy, Boolean isActive) {
         this.title = title;
         this.description = description;
         this.applyStartDate = applyStartDate;
         this.applyEndDate = applyEndDate;
         this.updatedBy = updatedBy;
+        if (isActive != null) {
+            this.isActive = isActive;
+        }
         // modifiedDate는 @PreUpdate에 의해 자동으로 갱신됩니다.
     }
 

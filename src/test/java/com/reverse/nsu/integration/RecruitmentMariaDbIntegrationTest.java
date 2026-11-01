@@ -43,6 +43,8 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.sql.Connection;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -119,6 +121,51 @@ class RecruitmentMariaDbIntegrationTest {
         assertThat(found.getSlotDate()).isEqualTo(LocalDate.of(2026, 11, 10));
         assertThat(found.getStartTime()).isEqualTo(LocalTime.of(10, 0));
         assertThat(found.getEndTime()).isEqualTo(LocalTime.of(10, 30));
+    }
+
+    @Test
+    void persistsExplicitlyInactiveRecruitmentCreatedByAdminService() {
+        Map<String, Object> request = new HashMap<>();
+        request.put("title", "Inactive integration recruitment");
+        request.put("description", "Inactive until launch");
+        request.put("applyStartDate", "2027-03-01T00:00:00");
+        request.put("applyEndDate", "2027-03-31T23:59:59");
+        request.put("isActive", false);
+
+        Recruitment created = recruitmentAdminService.createRecruitment(request, "test");
+        Integer recruitmentId = created.getRecruitmentId();
+        entityManager.flush();
+        entityManager.clear();
+
+        Recruitment persisted = recruitmentRepository.findById(recruitmentId).orElseThrow();
+        assertThat(persisted.getIsActive()).isFalse();
+    }
+
+    @Test
+    void adminUpdatePersistsActiveStatusAndPreservesItWhenOmitted() {
+        Recruitment created = saveRecruitment("Active status update integration recruitment");
+        Integer recruitmentId = created.getRecruitmentId();
+
+        recruitmentAdminService.updateRecruitment(
+                recruitmentId, recruitmentUpdateRequest(false, true), "test");
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(recruitmentRepository.findById(recruitmentId).orElseThrow().getIsActive())
+                .isFalse();
+
+        recruitmentAdminService.updateRecruitment(
+                recruitmentId, recruitmentUpdateRequest(true, true), "test");
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(recruitmentRepository.findById(recruitmentId).orElseThrow().getIsActive())
+                .isTrue();
+
+        recruitmentAdminService.updateRecruitment(
+                recruitmentId, recruitmentUpdateRequest(null, false), "test");
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(recruitmentRepository.findById(recruitmentId).orElseThrow().getIsActive())
+                .isTrue();
     }
 
     @Test
@@ -461,6 +508,18 @@ class RecruitmentMariaDbIntegrationTest {
                 .isActive(true)
                 .updatedBy("test")
                 .build());
+    }
+
+    private Map<String, Object> recruitmentUpdateRequest(Boolean isActive, boolean includeIsActive) {
+        Map<String, Object> request = new HashMap<>();
+        request.put("title", "Updated integration recruitment");
+        request.put("description", "Updated integration test");
+        request.put("applyStartDate", "2026-03-01T00:00:00");
+        request.put("applyEndDate", "2026-03-31T23:59:59");
+        if (includeIsActive) {
+            request.put("isActive", isActive);
+        }
+        return request;
     }
 
     private RecruitmentInterviewSlot slot(
