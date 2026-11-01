@@ -2,6 +2,9 @@ package com.reverse.nsu.controller;
 
 import com.reverse.nsu.dto.ApplicationInterviewScheduleRequestDto;
 import com.reverse.nsu.dto.RecruitmentRequestDto;
+import com.reverse.nsu.entity.Recruitment;
+import com.reverse.nsu.entity.RecruitmentPage;
+import com.reverse.nsu.exception.InvalidRecruitmentRequestException;
 import com.reverse.nsu.exception.InterviewSlotConflictException;
 import com.reverse.nsu.service.EmailService;
 import com.reverse.nsu.service.RecruitmentAdminService;
@@ -9,8 +12,18 @@ import com.reverse.nsu.service.RecruitmentNotifyService;
 import com.reverse.nsu.service.RecruitmentService;
 import com.reverse.nsu.service.RoleCheckService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.persistence.EntityManager;
+import com.reverse.nsu.repository.ApplicationInterviewScheduleRepository;
+import com.reverse.nsu.repository.RecruitmentApplicationRepository;
+import com.reverse.nsu.repository.RecruitmentInterviewSlotRepository;
+import com.reverse.nsu.repository.RecruitmentRepository;
+import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -19,9 +32,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ExtendWith(MockitoExtension.class)
 class RecruitmentAdminControllerTest {
@@ -44,8 +61,145 @@ class RecruitmentAdminControllerTest {
     @Mock
     private HttpServletRequest request;
 
+    @Mock private RecruitmentRepository recruitmentRepository;
+    @Mock private RecruitmentApplicationRepository applicationRepository;
+    @Mock private ApplicationInterviewScheduleRepository interviewScheduleRepository;
+    @Mock private RecruitmentInterviewSlotRepository interviewSlotRepository;
+    @Mock private EntityManager entityManager;
+
     @InjectMocks
     private RecruitmentAdminController controller;
+
+    private MockMvc mockMvc;
+
+    @BeforeEach
+    void setUpMockMvcWithRealRecruitmentService() {
+        RecruitmentAdminService realRecruitmentAdminService = new RecruitmentAdminService(
+                recruitmentRepository,
+                applicationRepository,
+                interviewScheduleRepository,
+                interviewSlotRepository,
+                entityManager);
+        RecruitmentAdminController httpController = new RecruitmentAdminController(
+                recruitmentService,
+                realRecruitmentAdminService,
+                notifyService,
+                roleCheckService,
+                emailService);
+        mockMvc = MockMvcBuilders.standaloneSetup(httpController)
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .build();
+        lenient().when(roleCheckService.isAdmin("admin01")).thenReturn(true);
+        lenient().when(recruitmentRepository.findById(11)).thenReturn(java.util.Optional.of(
+                Recruitment.builder()
+                        .recruitmentId(11)
+                        .title("Existing recruitment")
+                        .description("Existing description")
+                        .applyStartDate(java.time.LocalDateTime.parse("2027-03-01T00:00:00"))
+                        .applyEndDate(java.time.LocalDateTime.parse("2027-03-31T23:59:59"))
+                        .isActive(true)
+                        .updatedBy("admin01")
+                        .build()));
+        lenient().when(recruitmentRepository.save(org.mockito.ArgumentMatchers.any(Recruitment.class)))
+                .thenAnswer(invocation -> {
+                    Recruitment recruitment = invocation.getArgument(0);
+                    recruitment.setRecruitmentId(12);
+                    recruitment.getRecruitmentPage().setPageId(3);
+                    return recruitment;
+                });
+    }
+
+    @Test
+    void createReturnsBadRequestForNullStringAndNumericIsActiveValues() throws Exception {
+        for (String isActiveJson : new String[]{"null", "\"false\"", "0"}) {
+            mockMvc.perform(post("/api/recruit/admin")
+                            .requestAttr("userId", "admin01")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(validRecruitmentJson(isActiveJson)))
+                    .andExpect(status().isBadRequest());
+        }
+    }
+
+    @Test
+    void createAcceptsBooleanIsActiveValues() throws Exception {
+        for (String isActiveJson : new String[]{"true", "false"}) {
+            mockMvc.perform(post("/api/recruit/admin")
+                            .requestAttr("userId", "admin01")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(validRecruitmentJson(isActiveJson)))
+                    .andExpect(status().isOk());
+        }
+    }
+
+    @Test
+    void updateReturnsBadRequestForNullAndStringIsActiveValues() throws Exception {
+        for (String isActiveJson : new String[]{"null", "\"false\""}) {
+            mockMvc.perform(put("/api/recruit/admin/11")
+                            .requestAttr("userId", "admin01")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(validRecruitmentJson(isActiveJson)))
+                    .andExpect(status().isBadRequest());
+        }
+    }
+
+    @Test
+    void updateAcceptsBooleanIsActiveValues() throws Exception {
+        for (String isActiveJson : new String[]{"true", "false"}) {
+            mockMvc.perform(put("/api/recruit/admin/11")
+                            .requestAttr("userId", "admin01")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(validRecruitmentJson(isActiveJson)))
+                    .andExpect(status().isOk());
+        }
+    }
+
+    private String validRecruitmentJson(String isActiveJson) {
+        return "{\"title\":\"Recruitment\",\"description\":\"Description\","
+                + "\"applyStartDate\":\"2027-03-01T00:00:00\","
+                + "\"applyEndDate\":\"2027-03-31T23:59:59\","
+                + "\"isActive\":" + isActiveJson + "}";
+    }
+
+    @Test
+    void createReturnsPersistedRecruitmentActiveStatus() {
+        Map<String, Object> body = Map.of("title", "Inactive recruitment");
+        RecruitmentPage page = RecruitmentPage.builder().pageId(3).build();
+        Recruitment recruitment = Recruitment.builder()
+                .recruitmentId(11)
+                .title("Inactive recruitment")
+                .isActive(false)
+                .recruitmentPage(page)
+                .build();
+        when(request.getAttribute("userId")).thenReturn("admin01");
+        when(roleCheckService.isAdmin("admin01")).thenReturn(true);
+        when(recruitmentAdminService.createRecruitment(body, "admin01")).thenReturn(recruitment);
+
+        var response = controller.create(body, request);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(((Map<?, ?>) response.getBody()).get("isActive")).isEqualTo(false);
+    }
+
+    @Test
+    void updateReturnsPersistedRecruitmentActiveStatus() {
+        Map<String, Object> body = Map.of("isActive", false);
+        when(request.getAttribute("userId")).thenReturn("admin01");
+        when(roleCheckService.isAdmin("admin01")).thenReturn(true);
+        when(recruitmentAdminService.updateRecruitment(11, body, "admin01")).thenReturn(false);
+
+        var response = controller.update(11, body, request);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(((Map<?, ?>) response.getBody()).get("isActive")).isEqualTo(false);
+    }
+
+    @Test
+    void invalidRecruitmentRequestIsMappedToBadRequest() {
+        var response = new GlobalExceptionHandler().handleInvalidRecruitmentRequest(
+                new InvalidRecruitmentRequestException("isActive must be boolean"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+    }
 
     @Test
     void setInterview_savesAssignmentBeforeSendingAuditMail() {

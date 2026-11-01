@@ -1,6 +1,7 @@
 package com.reverse.nsu.service;
 
 import com.reverse.nsu.dto.ApplicationRequestDto;
+import com.reverse.nsu.dto.RecruitmentRequestDto;
 import com.reverse.nsu.dto.RecruitmentResponseDto;
 import com.reverse.nsu.entity.ApplicationInterviewSchedule;
 import com.reverse.nsu.entity.Recruitment;
@@ -70,6 +71,41 @@ class RecruitmentServiceTest {
                 interviewScheduleRepository,
                 notifyService
         );
+    }
+
+    @Test
+    void savePreservesExplicitlyInactiveStatusAndReturnsIt() {
+        RecruitmentRequestDto request = RecruitmentRequestDto.builder()
+                .title("Inactive recruitment")
+                .description("Not open yet")
+                .applyStartDate(LocalDateTime.of(2027, 3, 1, 0, 0))
+                .applyEndDate(LocalDateTime.of(2027, 3, 31, 23, 59))
+                .isActive(false)
+                .build();
+        when(recruitmentRepository.save(any(Recruitment.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        RecruitmentResponseDto response = recruitmentService.save(request, "admin01");
+
+        ArgumentCaptor<Recruitment> captor = ArgumentCaptor.forClass(Recruitment.class);
+        verify(recruitmentRepository).save(captor.capture());
+        assertThat(captor.getValue().getIsActive()).isFalse();
+        assertThat(response.getIsActive()).isFalse();
+    }
+
+    @Test
+    void getAllIncludesActualRecruitmentActiveStatus() {
+        Recruitment recruitment = Recruitment.builder()
+                .recruitmentId(11)
+                .title("Inactive recruitment")
+                .isActive(false)
+                .build();
+        when(recruitmentRepository.findAll()).thenReturn(List.of(recruitment));
+
+        List<RecruitmentResponseDto> responses = recruitmentService.getAll();
+
+        assertThat(responses).hasSize(1);
+        assertThat(responses.get(0).getIsActive()).isFalse();
     }
 
     @Test

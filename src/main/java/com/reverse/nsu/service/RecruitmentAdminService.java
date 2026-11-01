@@ -4,6 +4,7 @@ import com.reverse.nsu.dto.ApplicationInterviewScheduleRequestDto;
 import com.reverse.nsu.dto.RecruitmentRequestDto;
 import com.reverse.nsu.dto.RecruitmentResponseDto;
 import com.reverse.nsu.entity.*;
+import com.reverse.nsu.exception.InvalidRecruitmentRequestException;
 import com.reverse.nsu.exception.InterviewSlotConflictException;
 import com.reverse.nsu.repository.ApplicationInterviewScheduleRepository;
 import com.reverse.nsu.repository.RecruitmentApplicationRepository;
@@ -71,7 +72,7 @@ public class RecruitmentAdminService {
                 .applyStartDate(LocalDateTime.parse((String) request.get("applyStartDate")))
                 .applyEndDate(LocalDateTime.parse((String) request.get("applyEndDate")))
                 .updatedBy(adminId)
-                .isActive(true)
+                .isActive(readIsActive(request, true))
                 .build();
 
         recruitment.setRecruitmentPage(page);
@@ -84,17 +85,31 @@ public class RecruitmentAdminService {
      * 공고 기본 정보 수정 로직
      */
     @Transactional
-    public void updateRecruitment(Integer id, Map<String, Object> request, String adminId) {
+    public Boolean updateRecruitment(Integer id, Map<String, Object> request, String adminId) {
         Recruitment recruitment = recruitmentRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("해당 공고가 존재하지 않습니다. ID: " + id));
 
+        Boolean requestedIsActive = readIsActive(request, null);
         recruitment.update(
                 (String) request.get("title"),
                 (String) request.get("description"),
                 LocalDateTime.parse((String) request.get("applyStartDate")),
                 LocalDateTime.parse((String) request.get("applyEndDate")),
-                adminId
+                adminId,
+                requestedIsActive
         );
+        return recruitment.getIsActive();
+    }
+
+    private Boolean readIsActive(Map<String, Object> request, Boolean missingValue) {
+        if (!request.containsKey("isActive")) {
+            return missingValue;
+        }
+        Object value = request.get("isActive");
+        if (value instanceof Boolean isActive) {
+            return isActive;
+        }
+        throw new InvalidRecruitmentRequestException("isActive는 true 또는 false여야 합니다.");
     }
 
     /**
