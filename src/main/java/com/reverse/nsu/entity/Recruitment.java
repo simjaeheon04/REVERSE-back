@@ -19,17 +19,17 @@ public class Recruitment {
     @Column(name = "recruitmentId")
     private Integer recruitmentId;
 
-    @Column(name = "title", length = 255, nullable = false)
+    @Column(name = "title", length = 100, nullable = false)
     private String title;
 
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 
-    @Column(name = "applyStartDate")
+    @Column(name = "applyStartDate", nullable = false)
     @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime applyStartDate;
 
-    @Column(name = "applyEndDate")
+    @Column(name = "applyEndDate", nullable = false)
     @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime applyEndDate;
 

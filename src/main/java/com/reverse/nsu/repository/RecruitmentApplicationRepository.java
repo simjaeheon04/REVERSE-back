@@ -2,6 +2,7 @@ package com.reverse.nsu.repository;
 
 import com.reverse.nsu.entity.RecruitmentApplication;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
@@ -40,5 +41,6 @@ public interface RecruitmentApplicationRepository extends JpaRepository<Recruitm
     void deleteByRecruitment_RecruitmentId(Integer recruitmentId);
 
     // 기본 전체 조회 (기존 유지)
+    @EntityGraph(attributePaths = {"recruitment", "applicationInterviewSchedule", "applicationInterviewSchedule.interviewSlot"})
     List<RecruitmentApplication> findAllByRecruitment_RecruitmentId(Integer recruitmentId);
 }

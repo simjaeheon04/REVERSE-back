@@ -1,9 +1,13 @@
 package com.reverse.nsu.dto;
 
 import com.reverse.nsu.entity.Recruitment;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import lombok.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 
 @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
@@ -36,13 +40,25 @@ public class RecruitmentRequestDto {
     @Getter @Setter
     public static class InterviewSlotUpdate {
         private Integer roleId;
-        private List<SlotDto> slots;
+        @NotNull(message = "면접 슬롯 목록은 필수입니다.")
+        private List<@Valid SlotDto> slots;
     }
 
     @Getter @Setter
     public static class SlotDto {
+        private Integer slotId;
+
+        @NotNull(message = "면접 날짜는 필수입니다.")
         private LocalDate slotDate;
+
+        private LocalTime startTime;
+        private LocalTime endTime;
+
+        @NotNull(message = "면접 슬롯 정원은 필수입니다.")
+        @Positive(message = "면접 슬롯 정원은 1명 이상이어야 합니다.")
         private Integer capacity;
+
+        private Boolean isActive;
     }
 
     // 리스트 항목 DTO들

@@ -6,9 +6,11 @@ import com.reverse.nsu.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -32,7 +34,7 @@ public class RecruitmentService {
     /**
      * 지원서 제출
      */
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public void submitApplication(ApplicationRequestDto dto) {
         Recruitment recruit = recruitmentRepository.findById(dto.getRecruitmentId())
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 공고입니다."));
@@ -154,7 +156,9 @@ public class RecruitmentService {
                         .map(s -> RecruitmentResponseDto.SlotDetails.builder()
                                 .slotId(s.getSlotId())
                                 .date(s.getSlotDate() != null ? s.getSlotDate().toString() : "날짜 미정")
-                                .time("시간 미정") // 현재 DB 스키마에 시간 컬럼이 없으므로 고정값 처리
+                                .time(formatInterviewTime(s))
+                                .startTime(s.getStartTime())
+                                .endTime(s.getEndTime())
                                 .isAvailable(s.getIsActive())
                                 .build()).collect(Collectors.toList()))
                 .build();
@@ -281,6 +285,14 @@ public class RecruitmentService {
         cardRepository.deleteByRecruitmentPage_PageId(pageId);
         galleryRepository.deleteByRecruitmentPage_PageId(pageId);
         contactRepository.deleteByRecruitmentPage_PageId(pageId);
+    }
+
+    private String formatInterviewTime(RecruitmentInterviewSlot slot) {
+        if (slot.getStartTime() == null || slot.getEndTime() == null) {
+            return "시간 미정";
+        }
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("HH:mm");
+        return slot.getStartTime().format(formatter) + " - " + slot.getEndTime().format(formatter);
     }
 
     @Transactional(readOnly = true)
