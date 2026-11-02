@@ -109,15 +109,21 @@ public class NoticeService {
 
         if (hasAdminPrivilege(userId) || post.getUserId().equals(userId)) {
             post.update(dto);
-            if (dto.getImageUrls() != null) {
+            if (dto.isImageUrlsProvided() && dto.getImageUrls() != null) {
                 postAttachedRepository.deleteAllByPost(post);
-                saveAttachedImages(post, userId, dto.getImageUrls());
+                if (!dto.getImageUrls().isEmpty()) {
+                    saveAttachedImages(post, userId, dto.getImageUrls());
+                }
             }
         } else {
             throw new RuntimeException("수정 권한이 없습니다.");
         }
 
-        List<String> responseUrls = dto.getImageUrls() != null ? dto.getImageUrls() : Collections.emptyList();
+        List<String> responseUrls = dto.isImageUrlsProvided() && dto.getImageUrls() != null
+                ? dto.getImageUrls()
+                : postAttachedRepository.findAllByPost(post).stream()
+                        .map(PostAttached::getAttachedUrl)
+                        .toList();
         return new NoticeAdminResponseDto(post, responseUrls);
     }
 

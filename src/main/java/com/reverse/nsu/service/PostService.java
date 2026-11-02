@@ -3,11 +3,13 @@ package com.reverse.nsu.service;
 import com.reverse.nsu.dto.NoticeAdminRequestDto;
 import com.reverse.nsu.entity.Post;
 import com.reverse.nsu.entity.PostAttached;
+import jakarta.persistence.EntityNotFoundException;
 import com.reverse.nsu.repository.*; // Repository들 한 번에 관리
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -54,18 +56,20 @@ public class PostService {
     public void updatePost(Integer postId, NoticeAdminRequestDto dto, String userId) {
         Post post = findPostOrThrow(postId);
         if (!post.getUserId().equals(userId) && !roleCheckService.isAdmin(userId)) {
-            throw new IllegalStateException("수정 권한이 없습니다.");
+            throw new AccessDeniedException("게시글 수정 권한이 없습니다.");
         }
         validateDto(dto);
         post.update(dto);
 
-        if (dto.getImageUrls() != null) {
+        if (dto.isImageUrlsProvided() && dto.getImageUrls() != null) {
             // [수정] PostId(Integer)가 아닌 Post(객체)로 삭제
             postAttachedRepository.deleteAllByPost(post);
-            List<PostAttached> images = dto.getImageUrls().stream()
-                    .map(url -> PostAttached.create(post, userId, url))
-                    .collect(Collectors.toList());
-            postAttachedRepository.saveAll(images);
+            if (!dto.getImageUrls().isEmpty()) {
+                List<PostAttached> images = dto.getImageUrls().stream()
+                        .map(url -> PostAttached.create(post, userId, url))
+                        .collect(Collectors.toList());
+                postAttachedRepository.saveAll(images);
+            }
         }
     }
 
@@ -77,7 +81,7 @@ public class PostService {
         Post post = findPostOrThrow(postId);
 
         if (!post.getUserId().equals(userId) && !roleCheckService.isAdmin(userId)) {
-            throw new IllegalStateException("삭제 권한이 없습니다.");
+            throw new AccessDeniedException("게시글 삭제 권한이 없습니다.");
         }
 
         // [순서 수정] DB 제약 조건 해결을 위해 자식 데이터부터 명시적 삭제
@@ -164,7 +168,7 @@ public class PostService {
 
     private Post findPostOrThrow(Integer postId) {
         return postRepository.findById(postId)
-                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 게시글입니다. ID: " + postId));
+                .orElseThrow(() -> new EntityNotFoundException("게시글을 찾을 수 없습니다."));
     }
 
     private void validateDto(NoticeAdminRequestDto dto) {
