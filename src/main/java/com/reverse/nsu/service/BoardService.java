@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,28 +31,16 @@ public class BoardService {
     private final PostAttachedRepository postAttachedRepository;
     private final PostLikeRepository postLikeRepository;
 
-    private Integer boardId;
-
-    private Integer getBoardId() {
-        if (boardId == null) {
-            boardId = boardRepository.findByBoardName("게시판")
-                    .orElseThrow(() -> new RuntimeException("게시판이 존재하지 않습니다."))
-                    .getBoardId();
-        }
-        return boardId;
-    }
-
-    // 목록 조회
+    // 게시판 ID가 없는 레거시 목록 API는 기존 응답 형식을 유지하면서 전체 게시판 글을 조회한다.
     public Page<BoardPostListResponseDto> getAll(int page) {
-        Pageable pageable = PageRequest.of(page, 6);
-        return postRepository.findAllByBoardIdOrderByCreatedDateDesc(getBoardId(), pageable)
+        Pageable pageable = PageRequest.of(page, 6, Sort.by(Sort.Direction.DESC, "createdDate"));
+        return postRepository.findAll(pageable)
                 .map(BoardPostListResponseDto::new);
     }
 
     // 단건 조회
     public BoardPostResponseDto getOne(Integer postId) {
         Post post = postRepository.findById(postId)
-                .filter(p -> p.getBoardId().equals(getBoardId()))
                 .orElseThrow(() -> new IllegalArgumentException("NOT_FOUND"));
 
         // lazy 로딩 문제를 피하기 위해 postAttachedRepository로 직접 조회
@@ -67,7 +56,6 @@ public class BoardService {
     @Transactional
     public boolean toggleLike(Integer postId, String userId) {
         Post post = postRepository.findById(postId)
-                .filter(p -> p.getBoardId().equals(getBoardId()))
                 .orElseThrow(() -> new IllegalArgumentException("NOT_FOUND"));
 
         // [수정] PostId(Integer) 대신 Post 객체 자체를 넘겨서 조회하도록 통일합니다.

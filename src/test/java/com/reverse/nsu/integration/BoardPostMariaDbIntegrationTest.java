@@ -5,6 +5,7 @@ import com.reverse.nsu.entity.Post;
 import com.reverse.nsu.entity.PostAttached;
 import com.reverse.nsu.repository.PostAttachedRepository;
 import com.reverse.nsu.repository.PostRepository;
+import com.reverse.nsu.service.BoardService;
 import com.reverse.nsu.service.PostService;
 import com.reverse.nsu.service.RoleCheckService;
 import jakarta.persistence.EntityManager;
@@ -40,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DataJpaTest
 @ActiveProfiles("integration-test")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import(PostService.class)
+@Import({PostService.class, BoardService.class})
 class BoardPostMariaDbIntegrationTest {
 
     private static final String TEST_DATABASE = "reverse_board_integration_test";
@@ -68,6 +69,7 @@ class BoardPostMariaDbIntegrationTest {
     }
 
     @Autowired private PostService postService;
+    @Autowired private BoardService boardService;
     @Autowired private PostRepository postRepository;
     @Autowired private PostAttachedRepository postAttachedRepository;
     @Autowired private EntityManager entityManager;
@@ -126,6 +128,20 @@ class BoardPostMariaDbIntegrationTest {
         assertThat(reloaded.getPostTitle()).isEqualTo("Original title");
         assertThat(reloaded.getPostContents()).isEqualTo("Original content");
         assertThat(urls).containsExactly("https://cdn.example/keep.png");
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void detailLookupFindsPostsAcrossFreeNoticeAndActivityBoards() {
+        for (int boardId : List.of(6, 7, 8)) {
+            Integer postId = postService.createPost(
+                    request("Board " + boardId, "Body " + boardId), "board-test-user", boardId);
+
+            var response = boardService.getOne(postId);
+
+            assertThat(response.getPostId()).isEqualTo(postId);
+            assertThat(response.getBoardId()).isEqualTo(boardId);
+        }
     }
 
     private <T> T inTransaction(java.util.concurrent.Callable<T> work) {
