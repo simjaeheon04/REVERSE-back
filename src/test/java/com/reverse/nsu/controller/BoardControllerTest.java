@@ -18,6 +18,8 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.util.List;
 
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.lenient;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -34,7 +36,7 @@ class BoardControllerTest {
     void setUp() {
         mockMvc = MockMvcBuilders.standaloneSetup(
                 new BoardController(boardService, r2Service, roleCheckService)).build();
-        when(roleCheckService.isAssociateOrAbove("member")).thenReturn(true);
+        lenient().when(roleCheckService.isAssociateOrAbove("member")).thenReturn(true);
     }
 
     @Test
@@ -59,5 +61,30 @@ class BoardControllerTest {
                 .andExpect(jsonPath("$.data.boardId").value(27))
                 .andExpect(jsonPath("$.data.imageUrls[0]").value("https://cdn.example/detail.png"))
                 .andExpect(jsonPath("$.data.userId").value("author-id"));
+    }
+
+    @Test
+    void missingPostReturnsNotFound() throws Exception {
+        when(boardService.getOne(404)).thenThrow(new IllegalArgumentException("NOT_FOUND"));
+
+        mockMvc.perform(get("/api/posts/board/404").requestAttr("userId", "member"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void nonAssociateCannotReadAllBoardsDetailsOrToggleLikes() throws Exception {
+        when(roleCheckService.isAssociateOrAbove("guest")).thenReturn(false);
+
+        mockMvc.perform(get("/api/posts/board").requestAttr("userId", "guest"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/posts/board/106").requestAttr("userId", "guest"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/posts/board/106/like").requestAttr("userId", "guest"))
+                .andExpect(status().isForbidden());
+
+        verifyNoInteractions(boardService);
     }
 }
