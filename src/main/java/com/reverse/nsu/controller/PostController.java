@@ -4,12 +4,14 @@ import com.reverse.nsu.dto.BoardPostListResponseDto;
 import com.reverse.nsu.dto.NoticeAdminRequestDto;
 import com.reverse.nsu.service.PostService;
 import com.reverse.nsu.service.RoleCheckService;
+import jakarta.persistence.EntityNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -41,8 +43,12 @@ public class PostController {
         if (userId == null) return unauthorizedResponse();
         if (!roleCheckService.isAssociateOrAbove(userId)) return forbiddenResponse();
 
-        Integer postId = postService.createPost(dto, userId, boardId);
-        return ResponseEntity.ok(Map.of("status", "success", "postId", postId, "message", "등록되었습니다."));
+        try {
+            Integer postId = postService.createPost(dto, userId, boardId);
+            return ResponseEntity.ok(Map.of("status", "success", "postId", postId, "message", "등록되었습니다."));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        }
     }
 
     /**
@@ -61,8 +67,15 @@ public class PostController {
         try {
             postService.updatePost(postId, dto, userId);
             return ResponseEntity.ok(Map.of("status", "success", "message", "수정되었습니다."));
-        } catch (Exception e) {
+        } catch (EntityNotFoundException e) {
+            return ResponseEntity.status(404).body(Map.of("message", "게시글을 찾을 수 없습니다."));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        } catch (AccessDeniedException e) {
             return ResponseEntity.status(403).body(Map.of("message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("message", "게시글 수정 처리 중 오류가 발생했습니다."));
         }
     }
 
@@ -81,8 +94,13 @@ public class PostController {
         try {
             postService.deletePost(postId, userId);
             return ResponseEntity.ok(Map.of("status", "success", "message", "삭제되었습니다."));
-        } catch (Exception e) {
+        } catch (EntityNotFoundException e) {
+            return ResponseEntity.status(404).body(Map.of("message", "게시글을 찾을 수 없습니다."));
+        } catch (AccessDeniedException e) {
             return ResponseEntity.status(403).body(Map.of("message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("message", "게시글 삭제 처리 중 오류가 발생했습니다."));
         }
     }
 

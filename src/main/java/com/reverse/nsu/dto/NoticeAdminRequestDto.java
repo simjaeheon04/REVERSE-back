@@ -1,5 +1,7 @@
 package com.reverse.nsu.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonSetter;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter; // [추가] 컨트롤러에서 바인딩할 때 필요할 수 있음
@@ -19,4 +21,18 @@ public class NoticeAdminRequestDto {
 
     // [수정] null 방지를 위해 새 리스트로 초기화
     private List<String> imageUrls = new ArrayList<>();
+
+    @JsonIgnore
+    private boolean imageUrlsProvided;
+
+    @JsonSetter("imageUrls")
+    public void setImageUrls(List<String> imageUrls) {
+        this.imageUrls = imageUrls;
+        this.imageUrlsProvided = true;
+    }
+
+    @JsonIgnore
+    public boolean isImageUrlsProvided() {
+        return imageUrlsProvided;
+    }
 }
