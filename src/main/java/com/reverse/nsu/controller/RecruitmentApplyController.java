@@ -1,6 +1,8 @@
 package com.reverse.nsu.controller;
 
 import com.reverse.nsu.dto.ApplicationRequestDto;
+import com.reverse.nsu.exception.InterviewRequestException;
+import com.reverse.nsu.exception.InterviewSlotConflictException;
 import com.reverse.nsu.service.RecruitmentService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +31,8 @@ public class RecruitmentApplyController {
                     "status", "success",
                     "message", "신청이 완료되었습니다. 화이팅!"
             ));
+        } catch (InterviewRequestException | InterviewSlotConflictException e) {
+            throw e;
         } catch (IllegalStateException | IllegalArgumentException e) {
             // 중복 신청, 기간 만료 등 예상 가능한 예외 처리
             log.warn(">>>> [신청 거절] 사유: {}", e.getMessage());

@@ -1,5 +1,6 @@
 package com.reverse.nsu.integration;
 
+import com.reverse.nsu.controller.RecruitmentAdminController;
 import com.reverse.nsu.dto.ApplicationInterviewScheduleRequestDto;
 import com.reverse.nsu.dto.ApplicationRequestDto;
 import com.reverse.nsu.dto.RecruitmentRequestDto;
@@ -13,9 +14,12 @@ import com.reverse.nsu.repository.RecruitmentApplicationRepository;
 import com.reverse.nsu.repository.RecruitmentInterviewSlotRepository;
 import com.reverse.nsu.repository.RecruitmentRepository;
 import com.reverse.nsu.service.RecruitmentAdminService;
+import com.reverse.nsu.service.EmailService;
 import com.reverse.nsu.service.RecruitmentNotifyService;
 import com.reverse.nsu.service.RecruitmentService;
+import com.reverse.nsu.service.RoleCheckService;
 import jakarta.persistence.EntityManager;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -57,6 +61,9 @@ import javax.sql.DataSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 @Tag("integration")
 @Testcontainers
@@ -139,6 +146,95 @@ class RecruitmentMariaDbIntegrationTest {
 
         Recruitment persisted = recruitmentRepository.findById(recruitmentId).orElseThrow();
         assertThat(persisted.getIsActive()).isFalse();
+    }
+
+    @Test
+    void createdRecruitmentNeedsV2SlotsAndDetailReflectsAssignments() {
+        Map<String, Object> request = new HashMap<>();
+        request.put("title", "Interview flow integration recruitment");
+        request.put("description", "Interview flow");
+        request.put("applyStartDate", LocalDateTime.now().minusDays(1).toString());
+        request.put("applyEndDate", LocalDateTime.now().plusDays(1).toString());
+        Recruitment recruitment = recruitmentAdminService.createRecruitment(request, "admin01");
+        Integer recruitmentId = recruitment.getRecruitmentId();
+        entityManager.flush();
+
+        assertThat(slotRepository.findAllByRecruitment_RecruitmentId(recruitmentId)).isEmpty();
+        assertThat(recruitmentService.getRecruitPage(recruitmentId).getPage().getInterviewSlots()).isEmpty();
+
+        RecruitmentRequestDto.SlotDto first = slotDto(null, LocalTime.of(10, 0), LocalTime.of(10, 30), 1);
+        RecruitmentRequestDto.SlotDto second = slotDto(null, LocalTime.of(11, 0), LocalTime.of(11, 30), 2);
+        second.setIsActive(false);
+        RecruitmentRequestDto.InterviewSlotUpdate slots = new RecruitmentRequestDto.InterviewSlotUpdate();
+        slots.setSlots(List.of(first, second));
+        recruitmentAdminService.upsertInterviewSlots(recruitmentId, slots, "admin01");
+        entityManager.flush();
+        entityManager.clear();
+
+        var createdSlots = recruitmentService.getRecruitPage(recruitmentId).getPage().getInterviewSlots();
+        assertThat(createdSlots).hasSize(2);
+        Integer firstSlotId = createdSlots.stream().filter(s -> s.getIsActive()).findFirst().orElseThrow().getSlotId();
+        Integer secondSlotId = createdSlots.stream().filter(s -> !s.getIsActive()).findFirst().orElseThrow().getSlotId();
+        assertThat(createdSlots).extracting(s -> s.getIsAvailable()).containsExactlyInAnyOrder(true, false);
+
+        recruitmentService.submitApplication(applicationRequest(recruitmentId, firstSlotId, "20260051"));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(scheduleRepository.countByInterviewSlot_SlotId(firstSlotId)).isEqualTo(1);
+        var assignedSlots = recruitmentService.getRecruitPage(recruitmentId).getPage().getInterviewSlots();
+        assertThat(assignedSlots.stream().filter(s -> s.getSlotId().equals(firstSlotId)).findFirst().orElseThrow())
+                .satisfies(s -> {
+                    assertThat(s.getCapacity()).isEqualTo(1);
+                    assertThat(s.getCurrentCount()).isEqualTo(1);
+                    assertThat(s.getRemainingCount()).isZero();
+                    assertThat(s.getIsAvailable()).isFalse();
+                });
+        assertThat(assignedSlots.stream().filter(s -> s.getSlotId().equals(secondSlotId)).findFirst().orElseThrow()
+                .getIsAvailable()).isFalse();
+
+        recruitmentAdminService.upsertInterviewSlots(recruitmentId,
+                slotUpdate(firstSlotId, LocalTime.of(10, 30), LocalTime.of(11, 0), 1), "admin01");
+        entityManager.flush();
+        assertThat(slotRepository.findById(firstSlotId).orElseThrow().getStartTime())
+                .isEqualTo(LocalTime.of(10, 30));
+        assertThat(scheduleRepository.countByInterviewSlot_SlotId(firstSlotId)).isEqualTo(1);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void auditMailFailureDoesNotMaskCommittedSlotSaveOrCreateDuplicateOnRetry() {
+        Map<String, Object> request = new HashMap<>();
+        request.put("title", "Audit failure integration recruitment");
+        request.put("description", "Audit failure");
+        request.put("applyStartDate", LocalDateTime.now().minusDays(1).toString());
+        request.put("applyEndDate", LocalDateTime.now().plusDays(1).toString());
+        Integer recruitmentId = recruitmentAdminService.createRecruitment(request, "admin01")
+                .getRecruitmentId();
+
+        EmailService emailService = mock(EmailService.class);
+        RoleCheckService roleCheckService = mock(RoleCheckService.class);
+        HttpServletRequest httpRequest = mock(HttpServletRequest.class);
+        when(httpRequest.getAttribute("userId")).thenReturn("admin01");
+        when(roleCheckService.isAdmin("admin01")).thenReturn(true);
+        doThrow(new RuntimeException("mail failure"))
+                .when(emailService).sendAuditLog("admin01", "모집 공고 면접 슬롯 V2 설정 (ID: " + recruitmentId + ")");
+        RecruitmentAdminController controller = new RecruitmentAdminController(
+                recruitmentService, recruitmentAdminService, notifyService, roleCheckService, emailService);
+        RecruitmentRequestDto.InterviewSlotUpdate slotRequest =
+                slotUpdate(null, LocalTime.of(10, 0), LocalTime.of(10, 30), 1);
+
+        try {
+            assertThat(controller.upsertInterviewSlots(recruitmentId, slotRequest, httpRequest)
+                    .getStatusCode().value()).isEqualTo(200);
+            assertThat(slotRepository.findAllByRecruitment_RecruitmentId(recruitmentId)).hasSize(1);
+
+            assertThat(controller.upsertInterviewSlots(recruitmentId, slotRequest, httpRequest)
+                    .getStatusCode().value()).isEqualTo(409);
+            assertThat(slotRepository.findAllByRecruitment_RecruitmentId(recruitmentId)).hasSize(1);
+        } finally {
+            deleteAllIntegrationData();
+        }
     }
 
     @Test

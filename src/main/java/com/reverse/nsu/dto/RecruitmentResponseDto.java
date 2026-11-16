@@ -81,6 +81,10 @@ public class RecruitmentResponseDto {
         private LocalTime startTime;
         private LocalTime endTime;
         private Boolean isAvailable; // 정의서: 면접 기간 외 선택 불가 로직용
+        private Integer capacity;
+        private Long currentCount;
+        private Long remainingCount;
+        private Boolean isActive;
     }
 
     // [최종 수정] 지원자 목록 및 상세 정보를 위한 내부 클래스
