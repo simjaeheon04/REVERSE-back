@@ -2,16 +2,20 @@ package com.reverse.nsu.service;
 
 import com.reverse.nsu.dto.*;
 import com.reverse.nsu.entity.*;
+import com.reverse.nsu.exception.InterviewRequestException;
+import com.reverse.nsu.exception.InterviewSlotConflictException;
 import com.reverse.nsu.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -37,7 +41,7 @@ public class RecruitmentService {
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public void submitApplication(ApplicationRequestDto dto) {
         Recruitment recruit = recruitmentRepository.findById(dto.getRecruitmentId())
-                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 공고입니다."));
+                .orElseThrow(() -> new InterviewRequestException(HttpStatus.NOT_FOUND, "존재하지 않는 공고입니다."));
 
         LocalDateTime now = LocalDateTime.now();
         boolean isApplyPeriod = (recruit.getApplyStartDate() != null && recruit.getApplyEndDate() != null) &&
@@ -75,16 +79,17 @@ public class RecruitmentService {
 
         if (dto.getInterviewSlotId() != null) {
             RecruitmentInterviewSlot slot = interviewSlotRepository.findByIdForUpdate(dto.getInterviewSlotId())
-                    .orElseThrow(() -> new IllegalArgumentException("유효하지 않은 면접 슬롯입니다."));
+                    .orElseThrow(() -> new InterviewRequestException(HttpStatus.NOT_FOUND, "유효하지 않은 면접 슬롯입니다."));
 
             if (!slot.getRecruitment().getRecruitmentId().equals(dto.getRecruitmentId())) {
-                throw new IllegalArgumentException("해당 공고의 면접 슬롯이 아닙니다.");
+                throw new InterviewRequestException(HttpStatus.BAD_REQUEST, "해당 공고의 면접 슬롯이 아닙니다.");
             }
             if (!Boolean.TRUE.equals(slot.getIsActive())) {
-                throw new IllegalStateException("선택할 수 없는 면접 슬롯입니다.");
+                throw new InterviewRequestException(HttpStatus.BAD_REQUEST, "선택할 수 없는 면접 슬롯입니다.");
             }
-            if (interviewScheduleRepository.countByInterviewSlot_SlotId(slot.getSlotId()) >= slot.getCapacity()) {
-                throw new IllegalStateException("선택한 면접 슬롯의 정원이 마감되었습니다.");
+            if (slot.getCapacity() == null || slot.getCapacity() <= 0
+                    || interviewScheduleRepository.countByInterviewSlot_SlotId(slot.getSlotId()) >= slot.getCapacity()) {
+                throw new InterviewSlotConflictException("선택한 면접 슬롯의 정원이 마감되었습니다.");
             }
             application.addInterviewSchedule(slot);
         }
@@ -119,6 +124,11 @@ public class RecruitmentService {
         }
 
         Integer pageId = page.getPageId();
+        Map<Integer, Long> assignmentCounts = interviewScheduleRepository
+                .countByRecruitmentIdGroupedBySlot(recruitmentId).stream()
+                .collect(Collectors.toMap(
+                        ApplicationInterviewScheduleRepository.SlotAssignmentCount::getSlotId,
+                        ApplicationInterviewScheduleRepository.SlotAssignmentCount::getCurrentCount));
 
         RecruitmentResponseDto.PageDetails pageDetails = RecruitmentResponseDto.PageDetails.builder()
                 .year(page.getHeroYear())
@@ -154,14 +164,22 @@ public class RecruitmentService {
                                 .build()).collect(Collectors.toList()))
                 // [수정 포인트] 엔티티 필드명 slotDate와 맞춤
                 .interviewSlots(slotRepository.findAllByRecruitment_RecruitmentId(recruitmentId).stream()
-                        .map(s -> RecruitmentResponseDto.SlotDetails.builder()
-                                .slotId(s.getSlotId())
-                                .date(s.getSlotDate() != null ? s.getSlotDate().toString() : "날짜 미정")
-                                .time(formatInterviewTime(s))
-                                .startTime(s.getStartTime())
-                                .endTime(s.getEndTime())
-                                .isAvailable(s.getIsActive())
-                                .build()).collect(Collectors.toList()))
+                        .map(s -> {
+                            long currentCount = assignmentCounts.getOrDefault(s.getSlotId(), 0L);
+                            long remainingCount = Math.max(0L, (long) s.getCapacity() - currentCount);
+                            return RecruitmentResponseDto.SlotDetails.builder()
+                                    .slotId(s.getSlotId())
+                                    .date(s.getSlotDate() != null ? s.getSlotDate().toString() : "날짜 미정")
+                                    .time(formatInterviewTime(s))
+                                    .startTime(s.getStartTime())
+                                    .endTime(s.getEndTime())
+                                    .isAvailable(Boolean.TRUE.equals(s.getIsActive()) && remainingCount > 0)
+                                    .capacity(s.getCapacity())
+                                    .currentCount(currentCount)
+                                    .remainingCount(remainingCount)
+                                    .isActive(s.getIsActive())
+                                    .build();
+                        }).collect(Collectors.toList()))
                 .build();
 
         return RecruitmentResponseDto.builder()

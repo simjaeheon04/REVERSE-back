@@ -5,6 +5,7 @@ import com.reverse.nsu.dto.RecruitmentRequestDto;
 import com.reverse.nsu.dto.RecruitmentResponseDto;
 import com.reverse.nsu.entity.Recruitment;
 import com.reverse.nsu.exception.InterviewSlotConflictException;
+import com.reverse.nsu.exception.InterviewRequestException;
 import com.reverse.nsu.service.EmailService;
 import com.reverse.nsu.service.RecruitmentAdminService;
 import com.reverse.nsu.service.RecruitmentNotifyService;
@@ -13,7 +14,9 @@ import com.reverse.nsu.service.RoleCheckService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.InputStreamResource;
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -28,6 +31,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/recruit/admin")
 @RequiredArgsConstructor
+@Slf4j
 @CrossOrigin(originPatterns = "*", allowCredentials = "true")
 public class RecruitmentAdminController {
 
@@ -170,9 +174,10 @@ public class RecruitmentAdminController {
         if (userId == null) return unauthorized();
         if (!roleCheckService.isAdmin(userId)) return forbidden();
 
-        recruitmentAdminService.setInterviewSchedule(body);
-        emailService.sendAuditLog(userId, "면접 스케줄 배정");
-        return ResponseEntity.ok(Map.of("status", "success", "message", "면접 배정 완료"));
+        return executeInterviewOperation(
+                () -> recruitmentAdminService.setInterviewSchedule(body),
+                () -> emailService.sendAuditLog(userId, "면접 스케줄 배정"),
+                "면접 배정 완료");
     }
 
     /**
@@ -233,20 +238,10 @@ public class RecruitmentAdminController {
         if (userId == null) return unauthorized();
         if (!roleCheckService.isAdmin(userId)) return forbidden();
 
-        try {
-            recruitmentAdminService.updateInterviewSlots(id, body, userId);
-        } catch (InterviewSlotConflictException e) {
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
-                    "status", "error",
-                    "message", e.getMessage()
-            ));
-        }
-        emailService.sendAuditLog(userId, "모집 공고 면접 슬롯 설정 (ID: " + id + ")");
-
-        return ResponseEntity.ok(Map.of(
-                "status", "success",
-                "message", "면접 날짜 및 정원 설정 완료"
-        ));
+        return executeInterviewOperation(
+                () -> recruitmentAdminService.updateInterviewSlots(id, body, userId),
+                () -> emailService.sendAuditLog(userId, "모집 공고 면접 슬롯 설정 (ID: " + id + ")"),
+                "면접 날짜 및 정원 설정 완료");
     }
 
     @PostMapping("/{id}/slots/v2")
@@ -259,20 +254,31 @@ public class RecruitmentAdminController {
         if (userId == null) return unauthorized();
         if (!roleCheckService.isAdmin(userId)) return forbidden();
 
+        return executeInterviewOperation(
+                () -> recruitmentAdminService.upsertInterviewSlots(id, body, userId),
+                () -> emailService.sendAuditLog(userId, "모집 공고 면접 슬롯 V2 설정 (ID: " + id + ")"),
+                "면접 날짜 및 시간 설정 완료");
+    }
+
+    private ResponseEntity<?> executeInterviewOperation(
+            Runnable operation, Runnable auditLog, String successMessage) {
         try {
-            recruitmentAdminService.upsertInterviewSlots(id, body, userId);
+            operation.run();
         } catch (InterviewSlotConflictException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
-                    "status", "error",
-                    "message", e.getMessage()
-            ));
+                    "status", "error", "message", e.getMessage()));
+        } catch (InterviewRequestException | DataAccessException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                    "status", "error", "message", "면접 처리 중 오류가 발생했습니다."));
         }
-        emailService.sendAuditLog(userId, "모집 공고 면접 슬롯 V2 설정 (ID: " + id + ")");
-
-        return ResponseEntity.ok(Map.of(
-                "status", "success",
-                "message", "면접 날짜 및 시간 설정 완료"
-        ));
+        try {
+            auditLog.run();
+        } catch (RuntimeException e) {
+            log.error("면접 변경 이력 메일 발송에 실패했습니다.", e);
+        }
+        return ResponseEntity.ok(Map.of("status", "success", "message", successMessage));
     }
 
     private String resolveUserId(HttpServletRequest request) {

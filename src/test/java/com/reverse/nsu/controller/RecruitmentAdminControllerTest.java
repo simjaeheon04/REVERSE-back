@@ -223,10 +223,21 @@ class RecruitmentAdminControllerTest {
         doThrow(new RuntimeException("mail failure"))
                 .when(emailService).sendAuditLog("admin01", "면접 스케줄 배정");
 
-        assertThatThrownBy(() -> controller.setInterview(body, request))
-                .isInstanceOf(RuntimeException.class);
+        assertThat(controller.setInterview(body, request).getStatusCode().value()).isEqualTo(200);
 
         verify(recruitmentAdminService).setInterviewSchedule(body);
+    }
+
+    @Test
+    void setInterview_unexpectedServiceFailureReturns500WithoutAuditMail() {
+        ApplicationInterviewScheduleRequestDto body = interviewRequest();
+        when(request.getAttribute("userId")).thenReturn("admin01");
+        when(roleCheckService.isAdmin("admin01")).thenReturn(true);
+        doThrow(new RuntimeException("internal failure"))
+                .when(recruitmentAdminService).setInterviewSchedule(body);
+
+        assertThat(controller.setInterview(body, request).getStatusCode().value()).isEqualTo(500);
+        verify(emailService, never()).sendAuditLog("admin01", "면접 스케줄 배정");
     }
 
     @Test
@@ -282,6 +293,44 @@ class RecruitmentAdminControllerTest {
                 "status", "error",
                 "message", "slotId를 포함해 /slots/v2 API를 사용해주세요."));
         verify(emailService, never()).sendAuditLog("admin01", "모집 공고 면접 슬롯 설정 (ID: 11)");
+    }
+
+    @Test
+    void v2ReturnsNotFoundForMissingRecruitment() throws Exception {
+        when(recruitmentRepository.findByIdForUpdate(999)).thenReturn(java.util.Optional.empty());
+
+        mockMvc.perform(post("/api/recruit/admin/999/slots/v2")
+                        .requestAttr("userId", "admin01")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"slots\":[]}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void v2ReturnsConflictForDuplicateSlotInRequest() throws Exception {
+        when(recruitmentRepository.findByIdForUpdate(11)).thenReturn(java.util.Optional.of(
+                Recruitment.builder().recruitmentId(11).build()));
+        String slot = "{\"slotDate\":\"2026-11-20\",\"startTime\":\"10:00\","
+                + "\"endTime\":\"10:30\",\"capacity\":2}";
+
+        mockMvc.perform(post("/api/recruit/admin/11/slots/v2")
+                        .requestAttr("userId", "admin01")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"slots\":[" + slot + "," + slot + "]}"))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void v2ReturnsBadRequestForInvalidTimeRange() throws Exception {
+        when(recruitmentRepository.findByIdForUpdate(11)).thenReturn(java.util.Optional.of(
+                Recruitment.builder().recruitmentId(11).build()));
+
+        mockMvc.perform(post("/api/recruit/admin/11/slots/v2")
+                        .requestAttr("userId", "admin01")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"slots\":[{\"slotDate\":\"2026-11-20\","
+                                + "\"startTime\":\"11:00\",\"endTime\":\"10:00\",\"capacity\":2}]}"))
+                .andExpect(status().isBadRequest());
     }
 
     private ApplicationInterviewScheduleRequestDto interviewRequest() {
