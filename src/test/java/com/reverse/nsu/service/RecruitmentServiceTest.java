@@ -35,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -135,6 +136,40 @@ class RecruitmentServiceTest {
     }
 
     @Test
+    void getRecruitPage_reportsCapacityAndAvailabilityWithoutPerSlotCountQueries() {
+        RecruitmentInterviewSlot full = slot(LocalTime.of(10, 0), LocalTime.of(10, 30));
+        RecruitmentInterviewSlot inactive = slot(LocalTime.of(11, 0), LocalTime.of(11, 30));
+        inactive.setSlotId(22);
+        inactive.setIsActive(false);
+        RecruitmentInterviewSlot open = slot(LocalTime.of(12, 0), LocalTime.of(12, 30));
+        open.setSlotId(23);
+        stubRecruitPage(List.of(full, inactive, open));
+
+        ApplicationInterviewScheduleRepository.SlotAssignmentCount assigned =
+                mock(ApplicationInterviewScheduleRepository.SlotAssignmentCount.class);
+        when(assigned.getSlotId()).thenReturn(21);
+        when(assigned.getCurrentCount()).thenReturn(3L);
+        when(interviewScheduleRepository.countByRecruitmentIdGroupedBySlot(11))
+                .thenReturn(List.of(assigned));
+
+        List<RecruitmentResponseDto.SlotDetails> slots =
+                recruitmentService.getRecruitPage(11).getPage().getInterviewSlots();
+
+        assertThat(slots).extracting(RecruitmentResponseDto.SlotDetails::getIsAvailable)
+                .containsExactly(false, false, true);
+        assertThat(slots).extracting(RecruitmentResponseDto.SlotDetails::getCurrentCount)
+                .containsExactly(3L, 0L, 0L);
+        assertThat(slots).extracting(RecruitmentResponseDto.SlotDetails::getRemainingCount)
+                .containsExactly(0L, 3L, 3L);
+        assertThat(slots).extracting(RecruitmentResponseDto.SlotDetails::getCapacity)
+                .containsExactly(3, 3, 3);
+        assertThat(slots).extracting(RecruitmentResponseDto.SlotDetails::getIsActive)
+                .containsExactly(true, false, true);
+        verify(interviewScheduleRepository).countByRecruitmentIdGroupedBySlot(11);
+        verify(interviewScheduleRepository, never()).countByInterviewSlot_SlotId(any());
+    }
+
+    @Test
     void submitApplication_createsScheduleLinkedToApplicationAndSelectedSlot() {
         Recruitment recruitment = activeRecruitment(11);
         RecruitmentInterviewSlot slot = applicationSlot(21, recruitment, true, 3);
@@ -196,7 +231,7 @@ class RecruitmentServiceTest {
         when(interviewSlotRepository.findByIdForUpdate(21)).thenReturn(Optional.of(slot));
 
         assertThatThrownBy(() -> recruitmentService.submitApplication(applicationRequest(21)))
-                .isInstanceOf(IllegalStateException.class);
+                .isInstanceOf(IllegalArgumentException.class);
 
         verify(interviewScheduleRepository, never()).countByInterviewSlot_SlotId(any());
         verify(applicationRepository, never()).save(any());
@@ -261,6 +296,10 @@ class RecruitmentServiceTest {
     }
 
     private void stubRecruitPage(RecruitmentInterviewSlot slot) {
+        stubRecruitPage(List.of(slot));
+    }
+
+    private void stubRecruitPage(List<RecruitmentInterviewSlot> slots) {
         Recruitment recruitment = Recruitment.builder().recruitmentId(11).title("Recruitment").build();
         RecruitmentPage page = RecruitmentPage.builder()
                 .pageId(1)
@@ -268,7 +307,7 @@ class RecruitmentServiceTest {
                 .build();
         when(recruitmentRepository.findById(11)).thenReturn(Optional.of(recruitment));
         when(pageRepository.findByRecruitment_RecruitmentId(11)).thenReturn(Optional.of(page));
-        when(slotRepository.findAllByRecruitment_RecruitmentId(11)).thenReturn(List.of(slot));
+        when(slotRepository.findAllByRecruitment_RecruitmentId(11)).thenReturn(slots);
     }
 
     private RecruitmentInterviewSlot slot(LocalTime startTime, LocalTime endTime) {

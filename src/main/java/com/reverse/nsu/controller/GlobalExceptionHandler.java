@@ -7,11 +7,25 @@ import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import com.reverse.nsu.exception.InvalidRecruitmentRequestException;
+import com.reverse.nsu.exception.InterviewRequestException;
+import com.reverse.nsu.exception.InterviewSlotConflictException;
 
 import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(InterviewRequestException.class)
+    public ResponseEntity<Map<String, String>> handleInterviewRequest(InterviewRequestException e) {
+        return ResponseEntity.status(e.getStatus())
+                .body(Map.of("status", "error", "message", e.getMessage()));
+    }
+
+    @ExceptionHandler(InterviewSlotConflictException.class)
+    public ResponseEntity<Map<String, String>> handleInterviewConflict(InterviewSlotConflictException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("status", "error", "message", e.getMessage()));
+    }
 
     @ExceptionHandler({CannotCreateTransactionException.class, DataAccessException.class})
     public ResponseEntity<Map<String, String>> handleDbException(Exception e) {

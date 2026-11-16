@@ -323,7 +323,7 @@ class RecruitmentAdminServiceTest {
         stubInterviewAssignment(application, slot);
 
         assertThatThrownBy(() -> recruitmentAdminService.setInterviewSchedule(interviewRequest(8, 21)))
-                .isInstanceOf(IllegalStateException.class);
+                .isInstanceOf(IllegalArgumentException.class);
 
         assertThat(application.getApplicationInterviewSchedule()).isEmpty();
     }
