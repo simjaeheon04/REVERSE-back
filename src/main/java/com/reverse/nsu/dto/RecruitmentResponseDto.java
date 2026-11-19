@@ -11,6 +11,7 @@ import java.util.List;
 public class RecruitmentResponseDto {
     private Integer recruitmentId;
     private String title;
+    private String description;
 
     // [종호 님 요청 사항] 모집 기간 지정을 위한 날짜 데이터 추가
     private LocalDateTime applyStartDate; // 모집 시작일

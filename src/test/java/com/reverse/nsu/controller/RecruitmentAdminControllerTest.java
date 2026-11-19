@@ -39,6 +39,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 @ExtendWith(MockitoExtension.class)
 class RecruitmentAdminControllerTest {
@@ -304,6 +305,26 @@ class RecruitmentAdminControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"slots\":[]}"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void v2RejectsEmptyNullAndMissingSlotListsWithInterviewErrorResponse() throws Exception {
+        when(recruitmentRepository.findByIdForUpdate(11)).thenReturn(java.util.Optional.of(
+                Recruitment.builder().recruitmentId(11).build()));
+
+        for (String body : java.util.List.of("{\"slots\":[]}", "{\"slots\":null}", "{}")) {
+            mockMvc.perform(post("/api/recruit/admin/11/slots/v2")
+                            .requestAttr("userId", "admin01")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.status").value("error"))
+                    .andExpect(jsonPath("$.message").isString());
+        }
+
+        verify(interviewSlotRepository, never()).save(org.mockito.ArgumentMatchers.any());
+        verify(emailService, never()).sendAuditLog(
+                "admin01", "모집 공고 면접 슬롯 V2 설정 (ID: 11)");
     }
 
     @Test
