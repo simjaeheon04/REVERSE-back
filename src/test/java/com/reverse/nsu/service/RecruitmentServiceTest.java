@@ -1,5 +1,6 @@
 package com.reverse.nsu.service;
 
+import com.reverse.nsu.controller.RecruitmentController;
 import com.reverse.nsu.dto.ApplicationRequestDto;
 import com.reverse.nsu.dto.RecruitmentRequestDto;
 import com.reverse.nsu.dto.RecruitmentResponseDto;
@@ -24,6 +25,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -39,6 +41,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ExtendWith(MockitoExtension.class)
 class RecruitmentServiceTest {
@@ -56,6 +61,22 @@ class RecruitmentServiceTest {
     @Mock private RecruitmentNotifyService notifyService;
 
     private RecruitmentService recruitmentService;
+
+    @Test
+    void detailHttpResponseIncludesTopLevelDescriptionWithoutPage() throws Exception {
+        when(recruitmentRepository.findById(11)).thenReturn(Optional.of(Recruitment.builder()
+                .recruitmentId(11)
+                .title("Recruitment")
+                .description("Stored description")
+                .build()));
+
+        MockMvcBuilders.standaloneSetup(new RecruitmentController(recruitmentService, notifyService))
+                .build()
+                .perform(get("/api/recruit/11"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.description").value("Stored description"))
+                .andExpect(jsonPath("$.title").value("Recruitment"));
+    }
 
     @BeforeEach
     void setUp() {

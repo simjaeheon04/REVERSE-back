@@ -8,6 +8,7 @@ import com.reverse.nsu.entity.RecruitmentApplication;
 import com.reverse.nsu.entity.RecruitmentInterviewSlot;
 import com.reverse.nsu.exception.InvalidRecruitmentRequestException;
 import com.reverse.nsu.exception.InterviewSlotConflictException;
+import com.reverse.nsu.exception.InterviewRequestException;
 import com.reverse.nsu.repository.ApplicationInterviewScheduleRepository;
 import com.reverse.nsu.repository.RecruitmentApplicationRepository;
 import com.reverse.nsu.repository.RecruitmentInterviewSlotRepository;
@@ -396,6 +397,18 @@ class RecruitmentAdminServiceTest {
         assertThat(captor.getValue().getRecruitment()).isSameAs(recruitment);
         assertThat(captor.getValue().getStartTime()).isEqualTo(LocalTime.of(10, 0));
         assertThat(captor.getValue().getEndTime()).isEqualTo(LocalTime.of(10, 30));
+    }
+
+    @Test
+    void upsertInterviewSlots_rejectsEmptyListWithoutWritingSlots() {
+        when(recruitmentRepository.findByIdForUpdate(11)).thenReturn(Optional.of(recruitment(11)));
+        RecruitmentRequestDto.InterviewSlotUpdate request = new RecruitmentRequestDto.InterviewSlotUpdate();
+        request.setSlots(List.of());
+
+        assertThatThrownBy(() -> recruitmentAdminService.upsertInterviewSlots(11, request, "admin01"))
+                .isInstanceOfSatisfying(InterviewRequestException.class,
+                        e -> assertThat(e.getStatus().value()).isEqualTo(400));
+        verify(interviewSlotRepository, never()).save(any());
     }
 
     @Test
