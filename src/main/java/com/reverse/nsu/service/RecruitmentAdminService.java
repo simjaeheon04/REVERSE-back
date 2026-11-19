@@ -236,8 +236,8 @@ public class RecruitmentAdminService {
         Recruitment recruitment = recruitmentRepository.findByIdForUpdate(recruitmentId)
                 .orElseThrow(() -> new InterviewRequestException(HttpStatus.NOT_FOUND, "공고를 찾을 수 없습니다."));
 
-        if (dto.getSlots() == null) {
-            throw new InterviewRequestException(HttpStatus.BAD_REQUEST, "면접 슬롯 목록은 필수입니다.");
+        if (dto.getSlots() == null || dto.getSlots().isEmpty()) {
+            throw new InterviewRequestException(HttpStatus.BAD_REQUEST, "면접 슬롯 목록은 비어 있을 수 없습니다.");
         }
 
         Set<Integer> requestedSlotIds = new HashSet<>();

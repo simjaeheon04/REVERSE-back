@@ -9,6 +9,7 @@ import com.reverse.nsu.entity.Recruitment;
 import com.reverse.nsu.entity.RecruitmentApplication;
 import com.reverse.nsu.entity.RecruitmentInterviewSlot;
 import com.reverse.nsu.exception.InterviewSlotConflictException;
+import com.reverse.nsu.exception.InterviewRequestException;
 import com.reverse.nsu.repository.ApplicationInterviewScheduleRepository;
 import com.reverse.nsu.repository.RecruitmentApplicationRepository;
 import com.reverse.nsu.repository.RecruitmentInterviewSlotRepository;
@@ -149,6 +150,48 @@ class RecruitmentMariaDbIntegrationTest {
     }
 
     @Test
+    void detailReturnsStoredNullAndEmptyDescriptionsUnchanged() {
+        Recruitment recruitment = saveRecruitment();
+        Integer recruitmentId = recruitment.getRecruitmentId();
+
+        recruitment.setDescription(null);
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(recruitmentService.getRecruitPage(recruitmentId).getDescription()).isNull();
+
+        recruitmentRepository.findById(recruitmentId).orElseThrow().setDescription("");
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(recruitmentService.getRecruitPage(recruitmentId).getDescription()).isEmpty();
+        assertThat(recruitmentRepository.findById(recruitmentId).orElseThrow().getDescription()).isEmpty();
+    }
+
+    @Test
+    void emptyV2SlotListDoesNotChangeExistingDatabaseSlots() {
+        Recruitment recruitment = saveRecruitment();
+        Integer recruitmentId = recruitment.getRecruitmentId();
+        recruitmentAdminService.upsertInterviewSlots(recruitmentId,
+                slotUpdate(null, LocalTime.of(10, 0), LocalTime.of(10, 30), 3), "admin01");
+        entityManager.flush();
+        entityManager.clear();
+
+        RecruitmentInterviewSlot existing = slotRepository
+                .findAllByRecruitment_RecruitmentId(recruitmentId).get(0);
+        Integer slotId = existing.getSlotId();
+        RecruitmentRequestDto.InterviewSlotUpdate empty = new RecruitmentRequestDto.InterviewSlotUpdate();
+        empty.setSlots(List.of());
+
+        assertThatThrownBy(() -> recruitmentAdminService.upsertInterviewSlots(recruitmentId, empty, "admin01"))
+                .isInstanceOfSatisfying(InterviewRequestException.class,
+                        e -> assertThat(e.getStatus().value()).isEqualTo(400));
+        entityManager.clear();
+
+        assertThat(slotRepository.findAllByRecruitment_RecruitmentId(recruitmentId))
+                .extracting(RecruitmentInterviewSlot::getSlotId).containsExactly(slotId);
+        assertThat(slotRepository.findById(slotId).orElseThrow().getCapacity()).isEqualTo(3);
+    }
+
+    @Test
     void createdRecruitmentNeedsV2SlotsAndDetailReflectsAssignments() {
         Map<String, Object> request = new HashMap<>();
         request.put("title", "Interview flow integration recruitment");
@@ -160,7 +203,9 @@ class RecruitmentMariaDbIntegrationTest {
         entityManager.flush();
 
         assertThat(slotRepository.findAllByRecruitment_RecruitmentId(recruitmentId)).isEmpty();
-        assertThat(recruitmentService.getRecruitPage(recruitmentId).getPage().getInterviewSlots()).isEmpty();
+        var initialDetail = recruitmentService.getRecruitPage(recruitmentId);
+        assertThat(initialDetail.getDescription()).isEqualTo("Interview flow");
+        assertThat(initialDetail.getPage().getInterviewSlots()).isEmpty();
 
         RecruitmentRequestDto.SlotDto first = slotDto(null, LocalTime.of(10, 0), LocalTime.of(10, 30), 1);
         RecruitmentRequestDto.SlotDto second = slotDto(null, LocalTime.of(11, 0), LocalTime.of(11, 30), 2);
@@ -171,11 +216,24 @@ class RecruitmentMariaDbIntegrationTest {
         entityManager.flush();
         entityManager.clear();
 
-        var createdSlots = recruitmentService.getRecruitPage(recruitmentId).getPage().getInterviewSlots();
+        var createdDetail = recruitmentService.getRecruitPage(recruitmentId);
+        assertThat(createdDetail.getDescription()).isEqualTo("Interview flow");
+        assertThat(recruitmentRepository.findById(recruitmentId).orElseThrow().getDescription())
+                .isEqualTo("Interview flow");
+        var createdSlots = createdDetail.getPage().getInterviewSlots();
         assertThat(createdSlots).hasSize(2);
         Integer firstSlotId = createdSlots.stream().filter(s -> s.getIsActive()).findFirst().orElseThrow().getSlotId();
         Integer secondSlotId = createdSlots.stream().filter(s -> !s.getIsActive()).findFirst().orElseThrow().getSlotId();
         assertThat(createdSlots).extracting(s -> s.getIsAvailable()).containsExactlyInAnyOrder(true, false);
+        assertThat(createdSlots.stream().filter(s -> s.getSlotId().equals(firstSlotId)).findFirst().orElseThrow())
+                .satisfies(s -> {
+                    assertThat(s.getDate()).isEqualTo("2026-11-10");
+                    assertThat(s.getStartTime()).isEqualTo(LocalTime.of(10, 0));
+                    assertThat(s.getEndTime()).isEqualTo(LocalTime.of(10, 30));
+                    assertThat(s.getCapacity()).isEqualTo(1);
+                    assertThat(s.getCurrentCount()).isZero();
+                    assertThat(s.getRemainingCount()).isEqualTo(1);
+                });
 
         recruitmentService.submitApplication(applicationRequest(recruitmentId, firstSlotId, "20260051"));
         entityManager.flush();

@@ -40,7 +40,6 @@ public class RecruitmentRequestDto {
     @Getter @Setter
     public static class InterviewSlotUpdate {
         private Integer roleId;
-        @NotNull(message = "면접 슬롯 목록은 필수입니다.")
         private List<@Valid SlotDto> slots;
     }
 
