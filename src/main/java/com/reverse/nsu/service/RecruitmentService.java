@@ -12,7 +12,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +24,9 @@ import java.util.stream.Collectors;
 @Slf4j
 @RequiredArgsConstructor
 public class RecruitmentService {
+
+    private static final ZoneId RECRUITMENT_ZONE = ZoneId.of("Asia/Seoul");
+    private Clock clock = Clock.systemUTC();
 
     private final RecruitmentRepository recruitmentRepository;
     private final RecruitmentPageRepository pageRepository;
@@ -43,11 +48,7 @@ public class RecruitmentService {
         Recruitment recruit = recruitmentRepository.findById(dto.getRecruitmentId())
                 .orElseThrow(() -> new InterviewRequestException(HttpStatus.NOT_FOUND, "존재하지 않는 공고입니다."));
 
-        LocalDateTime now = LocalDateTime.now();
-        boolean isApplyPeriod = (recruit.getApplyStartDate() != null && recruit.getApplyEndDate() != null) &&
-                (now.isAfter(recruit.getApplyStartDate()) && now.isBefore(recruit.getApplyEndDate()));
-
-        if (!isApplyPeriod) {
+        if (!isWithinApplyPeriod(recruit)) {
             throw new IllegalStateException("지금은 신청 기간이 아닙니다.");
         }
 
@@ -106,9 +107,7 @@ public class RecruitmentService {
         Recruitment recruit = recruitmentRepository.findById(recruitmentId)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 공고입니다."));
 
-        LocalDateTime now = LocalDateTime.now();
-        boolean isApplyPeriod = (recruit.getApplyStartDate() != null && recruit.getApplyEndDate() != null) &&
-                (now.isAfter(recruit.getApplyStartDate()) && now.isBefore(recruit.getApplyEndDate()));
+        boolean isApplyPeriod = isWithinApplyPeriod(recruit);
 
         RecruitmentPage page = pageRepository.findByRecruitment_RecruitmentId(recruitmentId).orElse(null);
 
@@ -322,9 +321,15 @@ public class RecruitmentService {
     public boolean checkApplyPeriod(Integer recruitmentId) {
         Recruitment recruit = recruitmentRepository.findById(recruitmentId)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 공고입니다."));
-        LocalDateTime now = LocalDateTime.now();
-        return (recruit.getApplyStartDate() != null && recruit.getApplyEndDate() != null) &&
-                (now.isAfter(recruit.getApplyStartDate()) && now.isBefore(recruit.getApplyEndDate()));
+        return isWithinApplyPeriod(recruit);
+    }
+
+    private boolean isWithinApplyPeriod(Recruitment recruit) {
+        if (recruit.getApplyStartDate() == null || recruit.getApplyEndDate() == null) {
+            return false;
+        }
+        LocalDateTime now = LocalDateTime.now(clock.withZone(RECRUITMENT_ZONE));
+        return !now.isBefore(recruit.getApplyStartDate()) && !now.isAfter(recruit.getApplyEndDate());
     }
 
     @Transactional(readOnly = true)

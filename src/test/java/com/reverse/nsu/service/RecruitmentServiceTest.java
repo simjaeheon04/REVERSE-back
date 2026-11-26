@@ -21,17 +21,25 @@ import com.reverse.nsu.repository.RecruitmentRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -93,6 +101,100 @@ class RecruitmentServiceTest {
                 interviewScheduleRepository,
                 notifyService
         );
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("applyPeriodCases")
+    void applyPeriodUsesKstForDetailStatusAndSubmissionWithUtcClock(
+            String scenario, LocalDateTime kstNow, boolean available) throws Exception {
+        setUtcClockAtKstTime(kstNow);
+        Recruitment recruitment = Recruitment.builder()
+                .recruitmentId(23)
+                .applyStartDate(LocalDateTime.of(2026, 11, 27, 0, 0))
+                .applyEndDate(LocalDateTime.of(2026, 11, 30, 23, 59, 59))
+                .build();
+        when(recruitmentRepository.findById(23)).thenReturn(Optional.of(recruitment));
+        when(pageRepository.findByRecruitment_RecruitmentId(23)).thenReturn(Optional.empty());
+
+        assertThat(recruitmentService.getRecruitPage(23).getIsApplyPeriod()).isEqualTo(available);
+        assertThat(recruitmentService.checkApplyPeriod(23)).isEqualTo(available);
+        MockMvcBuilders.standaloneSetup(new RecruitmentController(recruitmentService, notifyService))
+                .build()
+                .perform(get("/api/recruit/23/status"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.isAvailable").value(available));
+
+        ApplicationRequestDto request = applicationRequest(null);
+        request.setRecruitmentId(23);
+        if (available) {
+            recruitmentService.submitApplication(request);
+            verify(applicationRepository).save(any(RecruitmentApplication.class));
+        } else {
+            assertThatThrownBy(() -> recruitmentService.submitApplication(request))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("지금은 신청 기간이 아닙니다.");
+            verify(applicationRepository, never()).save(any());
+        }
+    }
+
+    private static Stream<Arguments> applyPeriodCases() {
+        return Stream.of(
+                Arguments.of("before start", LocalDateTime.of(2026, 11, 26, 23, 59, 59), false),
+                Arguments.of("at start", LocalDateTime.of(2026, 11, 27, 0, 0), true),
+                Arguments.of("one hour after start", LocalDateTime.of(2026, 11, 27, 1, 0), true),
+                Arguments.of("before UTC midnight", LocalDateTime.of(2026, 11, 27, 8, 59, 59), true),
+                Arguments.of("at UTC midnight", LocalDateTime.of(2026, 11, 27, 9, 0), true),
+                Arguments.of("at end", LocalDateTime.of(2026, 11, 30, 23, 59, 59), true),
+                Arguments.of("after end by one nanosecond",
+                        LocalDateTime.of(2026, 11, 30, 23, 59, 59, 1), false),
+                Arguments.of("after end", LocalDateTime.of(2026, 12, 1, 0, 0), false)
+        );
+    }
+
+    @Test
+    void applyPeriodUsesEachRecruitmentsOwnSchedule() {
+        setUtcClockAtKstTime(LocalDateTime.of(2026, 11, 27, 1, 0));
+        Recruitment open = Recruitment.builder()
+                .recruitmentId(23)
+                .applyStartDate(LocalDateTime.of(2026, 11, 27, 0, 0))
+                .applyEndDate(LocalDateTime.of(2026, 11, 30, 23, 59, 59))
+                .build();
+        Recruitment future = Recruitment.builder()
+                .recruitmentId(24)
+                .applyStartDate(LocalDateTime.of(2026, 12, 1, 0, 0))
+                .applyEndDate(LocalDateTime.of(2026, 12, 3, 23, 59, 59))
+                .build();
+        when(recruitmentRepository.findById(23)).thenReturn(Optional.of(open));
+        when(recruitmentRepository.findById(24)).thenReturn(Optional.of(future));
+
+        assertThat(recruitmentService.checkApplyPeriod(23)).isTrue();
+        assertThat(recruitmentService.checkApplyPeriod(24)).isFalse();
+    }
+
+    @Test
+    void missingApplyPeriodBoundaryDisablesDetailStatusAndSubmission() {
+        setUtcClockAtKstTime(LocalDateTime.of(2026, 11, 27, 1, 0));
+        LocalDateTime start = LocalDateTime.of(2026, 11, 27, 0, 0);
+        LocalDateTime end = LocalDateTime.of(2026, 11, 30, 23, 59, 59);
+        for (Recruitment recruitment : List.of(
+                Recruitment.builder().recruitmentId(23).applyEndDate(end).build(),
+                Recruitment.builder().recruitmentId(23).applyStartDate(start).build())) {
+            when(recruitmentRepository.findById(23)).thenReturn(Optional.of(recruitment));
+            when(pageRepository.findByRecruitment_RecruitmentId(23)).thenReturn(Optional.empty());
+
+            assertThat(recruitmentService.getRecruitPage(23).getIsApplyPeriod()).isFalse();
+            assertThat(recruitmentService.checkApplyPeriod(23)).isFalse();
+            ApplicationRequestDto request = applicationRequest(null);
+            request.setRecruitmentId(23);
+            assertThatThrownBy(() -> recruitmentService.submitApplication(request))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+        verify(applicationRepository, never()).save(any());
+    }
+
+    private void setUtcClockAtKstTime(LocalDateTime kstTime) {
+        ReflectionTestUtils.setField(recruitmentService, "clock", Clock.fixed(
+                kstTime.atZone(ZoneId.of("Asia/Seoul")).toInstant(), ZoneOffset.UTC));
     }
 
     @Test
