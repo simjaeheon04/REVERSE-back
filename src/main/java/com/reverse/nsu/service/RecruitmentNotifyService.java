@@ -97,7 +97,7 @@ public class RecruitmentNotifyService {
         message.setText(String.format(
                 "안녕하세요!\n\nREVERSE에 새로운 모집 공고 [%s]가 등록되었습니다.\n" +
                         "지금 바로 홈페이지에서 확인하고 지원해보세요!\n\n" +
-                        "🔗 홈페이지: https://reverse-nsu.com",
+                        "🔗 홈페이지: https://nsu-reverse.website",
                 title
         ));
 
