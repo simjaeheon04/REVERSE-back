@@ -19,7 +19,9 @@ public class WebConfig implements WebMvcConfigurer {
                         "http://localhost:3000",
                         "http://localhost:5173",
                         "https://nsu-reverse.site",
-                        "https://www.nsu-reverse.site"
+                        "https://www.nsu-reverse.site",
+                        "https://nsu-reverse.website",
+                        "https://www.nsu-reverse.website"
                 )
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
